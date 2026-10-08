@@ -22,6 +22,7 @@ COPY scripts/serve.js ./scripts/serve.js
 COPY scripts/email.js ./scripts/email.js
 COPY scripts/db.js ./scripts/db.js
 COPY scripts/api.js ./scripts/api.js
+COPY scripts/security.js ./scripts/security.js
 # Production start skips rebuild (public/ already in the image).
 # Required for live email verification: RESEND_API_KEY (+ EMAIL_FROM).
 # Optional admin bootstrap: ADMIN_EMAIL + ADMIN_PASSWORD.

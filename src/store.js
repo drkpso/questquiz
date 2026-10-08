@@ -268,11 +268,16 @@
     return { ok: true, learner: l };
   }
 
-  function verifyPin(learnerId, pin) {
-    const l = state.learners[learnerId];
-    if (!l || String(l.pin) !== String(pin)) return false;
+  async function verifyPin(learnerId, pin) {
+    if (!authToken) {
+      const l = state.learners[learnerId];
+      if (!l || String(l.pin) !== String(pin)) return false;
+      session.pinVerifiedAt = Date.now();
+      return true;
+    }
+    const data = await api('POST', '/api/auth/verify-pin', { learnerId, pin });
+    if (!data.ok) return false;
     session.pinVerifiedAt = Date.now();
-    audit(l.name, 'Identity confirmed before an assessment', 'exam');
     return true;
   }
 

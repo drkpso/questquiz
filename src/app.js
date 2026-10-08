@@ -2046,11 +2046,13 @@
       const plan = E.buildQuiz(el.dataset.id);
       startExam(plan, { passMark: st().settings.passMark, mode: 'quiz' });
     },
-    epin: el => {
+    epin: async el => {
       if (pub.pin.length >= 4) return;
       pub.pin += el.dataset.n;
       if (pub.pin.length === 4) {
-        if (S.verifyPin(S.session.learnerId, pub.pin)) { exam._needPin = false; pub.pin = ''; pub.error = ''; render(); return; }
+        const entered = pub.pin;
+        const ok = await S.verifyPin(S.session.learnerId, entered);
+        if (ok) { exam._needPin = false; pub.pin = ''; pub.error = ''; render(); return; }
         pub.error = 'That PIN is not right.'; pub.pin = '';
       }
       render();

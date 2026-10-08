@@ -15,9 +15,8 @@ tokens; clients receive a scoped snapshot (not other families’ private data).
 
 Still recommended before high traffic:
 
-- password hashing (bcrypt/argon2) — passwords are still stored reversible today
 - a real database (Postgres) instead of a single JSON file under write lock
-- rate limits on sign-in / verify / resend
+- ~~password hashing~~ / ~~rate limits~~ — shipped (scrypt + lockouts)
 
 Mount a Volume and set `ADMIN_EMAIL` / `ADMIN_PASSWORD` so school approvals work
 across redeploys.

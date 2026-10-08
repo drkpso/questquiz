@@ -4,6 +4,7 @@
 const crypto = require('crypto');
 const db = require('./db');
 const email = require('./email');
+const sec = require('./security');
 
 const GRADE_TO_BAND = {
   K: 'k2', 1: 'k2', 2: 'k2', 3: 'e35', 4: 'e35', 5: 'e35',
@@ -30,12 +31,14 @@ function stripSecrets(entity) {
   if (!entity || typeof entity !== 'object') return entity;
   const out = { ...entity };
   delete out.password;
+  delete out.pin;
   delete out.emailCode;
   delete out.codeAt;
   delete out.codeAttempts;
   delete out.otp;
   delete out.otpAt;
   delete out.otpAttempts;
+  if (entity.pin != null && entity.pin !== '') out.hasPin = true;
   return out;
 }
 
@@ -75,11 +78,16 @@ function ensureAdmin() {
   const emailAddr = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD || '';
   if (!emailAddr || !password) return;
+  const hashed = sec.isHashed(password) ? password : sec.hashSecret(password);
   db.mutate(d => {
     const existing = findUserByEmail(d, emailAddr);
     if (existing) {
       existing.role = 'admin';
-      existing.password = password;
+      if (sec.verifySecret(password, existing.password)) {
+        if (!sec.isHashed(existing.password)) existing.password = sec.hashSecret(password);
+      } else {
+        existing.password = hashed;
+      }
       existing.status = 'active';
       existing.name = existing.name || 'Platform Admin';
       return;
@@ -87,9 +95,15 @@ function ensureAdmin() {
     const id = 'u_admin';
     d.users[id] = {
       id, role: 'admin', name: 'Platform Admin',
-      email: emailAddr, password, status: 'active', createdAt: today()
+      email: emailAddr, password: hashed, status: 'active', createdAt: today()
     };
   });
+}
+
+function bootSecurity() {
+  ensureAdmin();
+  const n = sec.migrateAllPlaintextInPlace();
+  if (n > 0) console.log('Hashed ' + n + ' plaintext secret(s) in place (scrypt).');
 }
 
 function createSession(d, { role, userId, learnerId }) {
@@ -264,27 +278,29 @@ async function sendCode(to, code, purpose) {
 }
 
 function publicStatus() {
-  ensureAdmin();
+  bootSecurity();
   return {
     ok: true,
     live: true,
     serverBacked: true,
     emailConfigured: email.configured(),
     from: email.configured() ? email.fromAddress() : null,
-    dataDir: db.DATA_DIR
+    dataDir: db.DATA_DIR,
+    secretsHashed: true,
+    rateLimited: true
   };
 }
 
 /* ---------------- auth handlers ---------------- */
 
-async function signupParent(body) {
+async function signupParent(body, req) {
   const name = String(body.name || '').trim();
   const em = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
   if (!name || !em || password.length < 6) {
     return { ok: false, error: 'Name, email, and a password of at least 6 characters are required.' };
   }
-  ensureAdmin();
+  bootSecurity();
   const code = code6();
   let userId = null;
   const conflict = db.mutate(d => {
@@ -292,8 +308,8 @@ async function signupParent(body) {
       return 'An account already exists for that email. Sign in instead.';
     }
     const u = {
-      id: uid('u'), role: 'parent', name, email: em, password,
-      children: [], status: 'email-pending', emailCode: code, codeAt: now(),
+      id: uid('u'), role: 'parent', name, email: em, password: sec.hashSecret(password),
+      children: [], status: 'email-pending', emailCode: sec.hashSecret(code), codeAt: now(),
       codeAttempts: 0, createdAt: today()
     };
     d.users[u.id] = u;
@@ -338,11 +354,11 @@ async function signupStudent(body) {
     if (!validLoginId(loginId) || findLearnerByLoginId(d, loginId)) loginId = suggestLoginId(d, name);
     const band = GRADE_TO_BAND[grade] || GRADE_TO_BAND[Number(grade)] || 'h912';
     const l = {
-      id: uid('l'), name, grade, band, pin, loginId,
-      avatar: body.avatar || '🦉', email: em, password,
+      id: uid('l'), name, grade, band, pin: sec.hashSecret(pin), loginId,
+      avatar: body.avatar || '🦉', email: em, password: sec.hashSecret(password),
       parentId: null, schoolId: school ? school.id : null,
       under13: false, selfManaged: true,
-      status: 'email-pending', emailCode: codeV, codeAt: now(), codeAttempts: 0,
+      status: 'email-pending', emailCode: sec.hashSecret(codeV), codeAt: now(), codeAttempts: 0,
       xp: 0, streak: 0, badges: [], recoveryQueue: [], history: [],
       progress: { [band]: { level: 1, cleared: {}, attempts: {}, passedInLevel: {} } },
       ap: { enrolled: [], courses: {} }, createdAt: today(),
@@ -363,25 +379,33 @@ async function signupStudent(body) {
   return { ok: true, learnerId, email: em };
 }
 
-async function resendCode(body) {
+async function resendCode(body, req) {
   const kind = body.kind === 'parent' ? 'parent' : 'student';
   const id = body.id;
+  const lockId = id || sec.clientKey(req);
+  const locked = sec.checkLock('resend', lockId);
+  if (!locked.ok) return locked;
+  const ipLock = sec.checkLock('resend', 'ip:' + sec.clientKey(req));
+  if (!ipLock.ok) return ipLock;
+
   let emailAddr = null;
   let code = null;
   const err = db.mutate(d => {
     if (kind === 'parent') {
       const u = d.users[id];
       if (!u) return 'Account not found.';
-      u.emailCode = code6(); u.codeAt = now(); u.codeAttempts = 0;
+      code = code6();
+      u.emailCode = sec.hashSecret(code); u.codeAt = now(); u.codeAttempts = 0;
       delete u.otp; delete u.otpAt; delete u.otpAttempts;
       if (u.status === 'otp-pending') u.status = 'email-pending';
-      emailAddr = u.email; code = u.emailCode;
+      emailAddr = u.email;
       audit(d, u.email, 'Parent email verification code resent', 'auth');
     } else {
       const l = d.learners[id];
       if (!l) return 'Account not found.';
-      l.emailCode = code6(); l.codeAt = now(); l.codeAttempts = 0;
-      emailAddr = l.email; code = l.emailCode;
+      code = code6();
+      l.emailCode = sec.hashSecret(code); l.codeAt = now(); l.codeAttempts = 0;
+      emailAddr = l.email;
       audit(d, l.email, 'Student email verification code resent', 'auth');
     }
     return null;
@@ -389,13 +413,21 @@ async function resendCode(body) {
   if (err) return { ok: false, error: err };
   const sent = await sendCode(emailAddr, code, kind);
   if (!sent.ok) return { ok: false, error: sent.error };
+  sec.recordResendOk(lockId);
+  sec.recordResendOk('ip:' + sec.clientKey(req));
   return { ok: true };
 }
 
-function verifyCode(body) {
+function verifyCode(body, req) {
   const kind = body.kind === 'parent' ? 'parent' : 'student';
   const id = body.id;
   const entered = String(body.code || '').trim();
+  const lockId = id || sec.clientKey(req);
+  const locked = sec.checkLock('verify', lockId);
+  if (!locked.ok) return locked;
+  const ipLock = sec.checkLock('verify', 'ip:' + sec.clientKey(req));
+  if (!ipLock.ok) return ipLock;
+
   let sessionToken = null;
   let role = null;
   let userId = null;
@@ -411,7 +443,9 @@ function verifyCode(body) {
       if (!code || !at || now() - at > CODE_TTL_MS) return 'That code has expired. Send a new one.';
       u.codeAttempts = (u.codeAttempts || u.otpAttempts || 0) + 1;
       if (u.codeAttempts > 5) return 'Too many attempts. Send a new code.';
-      if (String(entered) !== String(code)) return 'That code is not right. ' + (6 - u.codeAttempts) + ' attempts left.';
+      if (!sec.verifySecret(entered, code)) {
+        return 'That code is not right. ' + (6 - u.codeAttempts) + ' attempts left.';
+      }
       u.status = 'active'; u.verifiedAt = new Date().toISOString();
       delete u.emailCode; delete u.otp; delete u.otpAt; delete u.otpAttempts; delete u.codeAt; delete u.codeAttempts;
       audit(d, u.email, 'Parent email verified', 'auth');
@@ -423,7 +457,9 @@ function verifyCode(body) {
       if (!l.emailCode || !l.codeAt || now() - l.codeAt > CODE_TTL_MS) return 'That code has expired. Send a new one.';
       l.codeAttempts = (l.codeAttempts || 0) + 1;
       if (l.codeAttempts > 5) return 'Too many attempts. Send a new code.';
-      if (String(entered) !== String(l.emailCode)) return 'That code is not right. ' + (6 - l.codeAttempts) + ' attempts left.';
+      if (!sec.verifySecret(entered, l.emailCode)) {
+        return 'That code is not right. ' + (6 - l.codeAttempts) + ' attempts left.';
+      }
       l.status = 'active'; l.verifiedAt = new Date().toISOString();
       delete l.emailCode; delete l.codeAt; delete l.codeAttempts;
       audit(d, l.email, 'Student email verified', 'auth');
@@ -432,7 +468,12 @@ function verifyCode(body) {
     }
     return null;
   });
-  if (err) return { ok: false, error: err };
+  if (err) {
+    sec.recordFailure('verify', lockId);
+    sec.recordFailure('verify', 'ip:' + sec.clientKey(req));
+    return { ok: false, error: err };
+  }
+  sec.recordSuccess('verify', lockId);
   const d = db.get();
   const session = getSession(sessionToken);
   return {
@@ -447,19 +488,26 @@ function verifyCode(body) {
   };
 }
 
-function signIn(body) {
-  ensureAdmin();
+function signIn(body, req) {
+  bootSecurity();
   const em = String(body.email || '').toLowerCase().trim();
   const password = String(body.password || '');
+  const lockId = em || ('ip:' + sec.clientKey(req));
+  const locked = sec.checkLock('signin', lockId);
+  if (!locked.ok) return locked;
+  const ipLock = sec.checkLock('signin', 'ip:' + sec.clientKey(req));
+  if (!ipLock.ok) return ipLock;
+
   let result = null;
 
   db.mutate(d => {
     const u = findUserByEmail(d, em);
     if (u) {
-      if (u.password !== password) {
+      if (!sec.verifySecret(password, u.password)) {
         result = { ok: false, error: 'That password does not match this account.' };
         return;
       }
+      if (!sec.isHashed(u.password)) u.password = sec.hashSecret(password);
       if (u.status === 'email-pending' || u.status === 'otp-pending') {
         result = { ok: false, resume: 'parent-email', userId: u.id, email: u.email, error: 'This account still needs its email verified.' };
         return;
@@ -484,10 +532,11 @@ function signIn(body) {
     }
     const l = findLearnerByEmail(d, em);
     if (l) {
-      if (l.password !== password) {
+      if (!sec.verifySecret(password, l.password)) {
         result = { ok: false, error: 'That password does not match this account.' };
         return;
       }
+      if (!sec.isHashed(l.password)) l.password = sec.hashSecret(password);
       if (l.status === 'email-pending') {
         result = { ok: false, resume: 'student-email', learnerId: l.id, email: l.email, error: 'This account still needs its email verified.' };
         return;
@@ -509,15 +558,34 @@ function signIn(body) {
     }
     result = { ok: false, error: 'No account found for that email. Create one instead.' };
   });
+
+  if (!result || !result.ok) {
+    // Don't lock for "needs email verify" / school-pending — those are not secret guesses
+    if (result && (result.resume === 'parent-email' || result.resume === 'student-email' || result.resume === 'school-pending')) {
+      return result;
+    }
+    sec.recordFailure('signin', lockId);
+    sec.recordFailure('signin', 'ip:' + sec.clientKey(req));
+    const again = sec.checkLock('signin', lockId);
+    if (!again.ok) return again;
+    return result;
+  }
+  sec.recordSuccess('signin', lockId);
   return result;
 }
 
-function signInChild(body) {
+function signInChild(body, req) {
   const loginId = normalizeLoginId(body.loginId);
   const pin = String(body.pin || '');
   if (!validLoginId(loginId)) {
     return { ok: false, error: 'Enter the login ID your parent gave you.' };
   }
+  const lockId = loginId;
+  const locked = sec.checkLock('child', lockId);
+  if (!locked.ok) return locked;
+  const ipLock = sec.checkLock('child', 'ip:' + sec.clientKey(req));
+  if (!ipLock.ok) return ipLock;
+
   let result = null;
   db.mutate(d => {
     const l = findLearnerByLoginId(d, loginId);
@@ -529,10 +597,11 @@ function signInChild(body) {
       result = { ok: false, error: 'A parent still needs to finish setting up this login. Ask them to open Family → Login details.' };
       return;
     }
-    if (String(l.pin) !== pin) {
+    if (!sec.verifySecret(pin, l.pin)) {
       result = { ok: false, error: 'That login ID or code is not right. Ask a parent for help.' };
       return;
     }
+    if (!sec.isHashed(l.pin)) l.pin = sec.hashSecret(pin);
     const t = createSession(d, { role: 'child', userId: l.parentId, learnerId: l.id });
     audit(d, l.loginId, 'Learner signed in with login ID + code', 'auth');
     const session = d.sessions[t];
@@ -543,7 +612,60 @@ function signInChild(body) {
       session: { role: 'child', userId: l.parentId, learnerId: l.id, pinVerifiedAt: Date.now() }
     };
   });
+  if (!result || !result.ok) {
+    sec.recordFailure('child', lockId);
+    sec.recordFailure('child', 'ip:' + sec.clientKey(req));
+    const again = sec.checkLock('child', lockId);
+    if (!again.ok) return again;
+    return result;
+  }
+  sec.recordSuccess('child', lockId);
   return result;
+}
+
+function verifyPin(body, req) {
+  const session = getSession(bearer(req));
+  if (!session || (!session.learnerId && session.role !== 'parent')) {
+    return { ok: false, error: 'Not signed in.', status: 401 };
+  }
+  const learnerId = body.learnerId || session.learnerId;
+  if (!learnerId) return { ok: false, error: 'Learner required.' };
+  if (session.role === 'child' && learnerId !== session.learnerId) {
+    return { ok: false, error: 'Not allowed.', status: 403 };
+  }
+  const pin = String(body.pin || '');
+  const lockId = 'pin:' + learnerId;
+  const locked = sec.checkLock('child', lockId);
+  if (!locked.ok) return locked;
+
+  let ok = false;
+  db.mutate(d => {
+    const l = d.learners[learnerId];
+    if (!l) return;
+    if (session.role === 'parent' && l.parentId !== session.userId) return;
+    if (!sec.verifySecret(pin, l.pin)) return;
+    if (!sec.isHashed(l.pin)) l.pin = sec.hashSecret(pin);
+    audit(d, l.name, 'Identity confirmed before an assessment', 'exam');
+    ok = true;
+  });
+  if (!ok) {
+    sec.recordFailure('child', lockId);
+    const again = sec.checkLock('child', lockId);
+    if (!again.ok) return again;
+    return { ok: false, error: 'That code is not right.' };
+  }
+  sec.recordSuccess('child', lockId);
+  return { ok: true };
+}
+
+/** Prefer keeping existing hashed secrets; hash any plaintext the client sends. */
+function mergeSecret(prevVal, incoming) {
+  if (incoming == null || incoming === '') return prevVal;
+  if (sec.isHashed(incoming)) {
+    // Never trust a client-supplied hash string as a new secret
+    return prevVal != null ? prevVal : incoming;
+  }
+  return sec.hashSecret(String(incoming));
 }
 
 function logout(reqToken) {
@@ -581,7 +703,7 @@ function signupSchool(body) {
       role: String(body.role || '').trim(),
       email: em,
       students: String(body.students || '').trim(),
-      password: String(body.password || ''),
+      password: sec.hashSecret(String(body.password || '')),
       status: 'pending',
       at: today()
     };
@@ -601,6 +723,7 @@ function requestParentLink(body) {
       childName: String(body.childName || '').trim(),
       grade: String(body.grade || ''),
       birthYear: body.birthYear,
+      // Kept plaintext only until a parent approves and a learner record is created (then hashed).
       pin: String(body.pin || ''),
       avatar: body.avatar || '🐢',
       parentEmail: String(body.parentEmail || '').trim().toLowerCase(),
@@ -636,10 +759,11 @@ function syncState(reqToken, payload) {
       if (incoming.users) {
         Object.entries(incoming.users).forEach(([id, u]) => {
           const prev = d.users[id] || {};
+          const { password: _p, emailCode: _e, pin: _pin, ...safe } = u;
           d.users[id] = {
             ...prev,
-            ...u,
-            password: u.password || prev.password,
+            ...safe,
+            password: mergeSecret(prev.password, u.password),
             emailCode: prev.emailCode,
             codeAt: prev.codeAt,
             codeAttempts: prev.codeAttempts
@@ -649,11 +773,12 @@ function syncState(reqToken, payload) {
       if (incoming.learners) {
         Object.entries(incoming.learners).forEach(([id, l]) => {
           const prev = d.learners[id] || {};
+          const { password: _p, emailCode: _e, pin: _pin, ...safe } = l;
           d.learners[id] = {
             ...prev,
-            ...l,
-            password: l.password || prev.password,
-            pin: l.pin != null ? l.pin : prev.pin,
+            ...safe,
+            password: mergeSecret(prev.password, l.password),
+            pin: (l.pin != null && l.pin !== '') ? mergeSecret(prev.pin, l.pin) : prev.pin,
             emailCode: prev.emailCode,
             codeAt: prev.codeAt,
             codeAttempts: prev.codeAttempts
@@ -666,8 +791,8 @@ function syncState(reqToken, payload) {
       if (Array.isArray(incoming.orders)) d.orders = incoming.orders;
       if (Array.isArray(incoming.pendingSchools)) {
         d.pendingSchools = incoming.pendingSchools.map(p => {
-          const prev = (d.pendingSchools || []).find(x => x.id === p.id);
-          return { ...(prev || {}), ...p, password: p.password || (prev && prev.password) };
+          const prev = (d.pendingSchools || []).find(x => x.id === p.id) || {};
+          return { ...prev, ...p, password: mergeSecret(prev.password, p.password) };
         });
       }
       if (Array.isArray(incoming.linkRequests)) d.linkRequests = incoming.linkRequests;
@@ -695,12 +820,13 @@ function syncState(reqToken, payload) {
         const prev = d.learners[l.id];
         if (prev && prev.parentId !== session.userId && !allowed.has(l.id)) return;
         if (!prev && l.parentId && l.parentId !== session.userId) return;
+        const { password: _pw, pin: _pin, emailCode: _ec, ...safeL } = l;
         const merged = {
           ...(prev || {}),
-          ...l,
+          ...safeL,
           parentId: session.userId,
-          password: (prev && prev.password) || l.password,
-          pin: l.pin != null ? l.pin : (prev && prev.pin),
+          password: mergeSecret(prev && prev.password, l.password),
+          pin: (l.pin != null && l.pin !== '') ? mergeSecret(prev && prev.pin, l.pin) : (prev && prev.pin),
           emailCode: prev && prev.emailCode,
           codeAt: prev && prev.codeAt,
           codeAttempts: prev && prev.codeAttempts
@@ -799,8 +925,14 @@ function syncState(reqToken, payload) {
   };
 }
 
+function statusOf(result) {
+  if (!result) return 400;
+  if (result.ok) return 200;
+  return result.status || 400;
+}
+
 async function handle(req, res, rel, { readJson, sendJson }) {
-  ensureAdmin();
+  bootSecurity();
 
   if (rel === '/api/status' && req.method === 'GET') {
     sendJson(res, 200, publicStatus());
@@ -810,8 +942,8 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   if (rel === '/api/auth/signup/parent' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const result = await signupParent(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      const result = await signupParent(body, req);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -822,7 +954,7 @@ async function handle(req, res, rel, { readJson, sendJson }) {
     try {
       const body = await readJson(req);
       const result = await signupStudent(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -833,7 +965,7 @@ async function handle(req, res, rel, { readJson, sendJson }) {
     try {
       const body = await readJson(req);
       const result = signupSchool(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -843,8 +975,8 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   if (rel === '/api/auth/resend' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const result = await resendCode(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      const result = await resendCode(body, req);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -854,8 +986,8 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   if (rel === '/api/auth/verify' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const result = verifyCode(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      const result = verifyCode(body, req);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -865,8 +997,8 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   if (rel === '/api/auth/signin' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const result = signIn(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      const result = signIn(body, req);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -876,8 +1008,19 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   if (rel === '/api/auth/signin-child' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const result = signInChild(body);
-      sendJson(res, result.ok ? 200 : 400, result);
+      const result = signInChild(body, req);
+      sendJson(res, statusOf(result), result);
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
+    }
+    return true;
+  }
+
+  if (rel === '/api/auth/verify-pin' && req.method === 'POST') {
+    try {
+      const body = await readJson(req);
+      const result = verifyPin(body, req);
+      sendJson(res, statusOf(result), result);
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
     }
@@ -939,6 +1082,6 @@ async function handle(req, res, rel, { readJson, sendJson }) {
   return false;
 }
 
-ensureAdmin();
+bootSecurity();
 
-module.exports = { handle, publicStatus, ensureAdmin };
+module.exports = { handle, publicStatus, ensureAdmin, bootSecurity };
