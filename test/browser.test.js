@@ -133,11 +133,26 @@ const ok = (n, c) => { console.log((c ? '  PASS' : '  FAIL') + ' — ' + n); if 
   ok('result screen reached', !!(await page.$('button[data-act="exitexam"]')));
   ok('per-unit breakdown on the result', (await page.content()).includes('By unit'));
 
-  console.log('SIGNUP — school, then admin approval');
+  console.log('SIGNUP — parent email (no false "already exists")');
   await page.click('button[data-act="exitexam"]');
   await page.waitForTimeout(200);
   await page.click('button[data-act="logout"]');
   await page.waitForTimeout(300);
+  await page.click('button[data-v="signup-role"]');
+  await page.waitForTimeout(200);
+  await page.click('button[data-v="signup-parent"]');
+  await page.waitForTimeout(200);
+  await page.fill('#pa-name', 'New Parent');
+  await page.fill('#pa-email', 'brand-new-parent@example.com');
+  await page.fill('#pa-pass', 'pw12345');
+  await page.click('form[data-act="doparent"] button[type="submit"]');
+  await page.waitForTimeout(600);
+  const afterParent = await page.content();
+  ok('parent reaches email verify (not already-exists)', afterParent.includes('Verify your email') && !afterParent.includes('An account already exists'));
+  await page.click('button[data-act="pub"][data-v="landing"]');
+  await page.waitForTimeout(200);
+
+  console.log('SIGNUP — school, then admin approval');
   await page.click('button[data-v="signup-role"]');
   await page.waitForTimeout(200);
   await page.click('button[data-v="signup-school"]');

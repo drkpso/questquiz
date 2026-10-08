@@ -1759,6 +1759,10 @@
     const stop = ev.target.closest('[data-stop]');
     const el = ev.target.closest('[data-act]');
     if (!el) return;
+    // Forms are handled by the submit listener. A click on the submit button
+    // bubbles to form[data-act] and used to double-fire (create account, then
+    // immediately "already exists").
+    if (el.tagName === 'FORM') return;
     if (el.dataset.act === 'closemodal' && stop && !ev.target.closest('button[data-act="closemodal"]')) return;
     const fn = ACTIONS[el.dataset.act];
     if (fn) { ev.preventDefault(); fn(el, ev); }
