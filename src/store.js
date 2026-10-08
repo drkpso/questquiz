@@ -48,7 +48,7 @@
     st.schools[school.id] = school;
     st.users['u_school'] = { id: 'u_school', role: 'school', name: 'Maple Ridge Front Office', email: 'office@mapleridge.edu', password: 'school123', schoolId: school.id, status: 'active' };
 
-    const parent = { id: 'u_parent', role: 'parent', name: 'Riya Sharma', email: 'parent@questquiz.app', password: 'parent123', phone: '+1 337 555 0148', children: ['l_aarav', 'l_kabir'], status: 'active', verifiedAt: new Date().toISOString(), createdAt: today() };
+    const parent = { id: 'u_parent', role: 'parent', name: 'Riya Sharma', email: 'parent@questquiz.app', password: 'parent123', children: ['l_aarav', 'l_kabir'], status: 'active', verifiedAt: new Date().toISOString(), createdAt: today() };
     st.users[parent.id] = parent;
 
     const mkLearner = (id, name, grade, pin, avatar, extra) => Object.assign({
@@ -121,7 +121,7 @@
     st.pendingSchools = [{
       id: uid('ps'), schoolName: 'Westlake STEM Academy', district: 'Calcasieu Parish',
       contactName: 'Dana Whitfield', role: 'Assistant Principal', email: 'dwhitfield@westlakestem.edu',
-      phone: '+1 337 555 0190', students: '640', password: 'school123',
+      students: '640', password: 'school123',
       status: 'pending', at: today()
     }];
 
@@ -183,7 +183,9 @@
     const u = findUserByEmail(em);
     if (u) {
       if (u.password !== password) return { ok: false, error: 'That password does not match this account.' };
-      if (u.status === 'otp-pending') return { ok: false, resume: 'parent-otp', userId: u.id, error: 'This account still needs its phone number verified.' };
+      if (u.status === 'email-pending' || u.status === 'otp-pending') {
+        return { ok: false, resume: 'parent-email', userId: u.id, error: 'This account still needs its email verified.' };
+      }
       if (u.status === 'pending') return { ok: false, resume: 'school-pending', error: 'This school registration is still waiting for admin approval.' };
       if (u.status === 'rejected') return { ok: false, error: 'This school registration was not approved. Contact support to appeal.' };
       session = { role: u.role, userId: u.id, learnerId: null, pinVerifiedAt: 0 };
@@ -251,36 +253,42 @@
     return { ok: true };
   }
 
-  /* ---------------- signup: parent (OTP) ---------------- */
+  /* ---------------- signup: parent (email verification) ---------------- */
   function signupParent(f) {
     if (findUserByEmail(f.email)) return { ok: false, error: 'An account already exists for that email. Sign in instead.' };
-    const otp = code6();
+    const code = code6();
     const u = {
       id: uid('u'), role: 'parent', name: f.name, email: f.email, password: f.password,
-      phone: f.phone, children: [], status: 'otp-pending', otp, otpAt: Date.now(),
-      otpAttempts: 0, createdAt: today()
+      children: [], status: 'email-pending', emailCode: code, codeAt: Date.now(),
+      codeAttempts: 0, createdAt: today()
     };
     state.users[u.id] = u; save();
-    audit(f.email, 'Parent account created — one-time passcode sent for phone verification', 'account');
-    return { ok: true, user: u, otp };
+    audit(f.email, 'Parent account created — verification code sent to email', 'account');
+    return { ok: true, user: u, code };
   }
-  function resendOtp(userId) {
+  function resendParentEmailCode(userId) {
     const u = state.users[userId];
     if (!u) return { ok: false, error: 'Account not found.' };
-    u.otp = code6(); u.otpAt = Date.now(); u.otpAttempts = 0; save();
-    audit(u.email, 'One-time passcode resent', 'auth');
-    return { ok: true, otp: u.otp };
-  }
-  function verifyOtp(userId, entered) {
-    const u = state.users[userId];
-    if (!u) return { ok: false, error: 'Account not found.' };
-    if (Date.now() - u.otpAt > 10 * 60 * 1000) return { ok: false, error: 'That passcode has expired. Send a new one.' };
-    u.otpAttempts = (u.otpAttempts || 0) + 1;
-    if (u.otpAttempts > 5) return { ok: false, error: 'Too many attempts. Send a new passcode.' };
-    if (String(entered) !== String(u.otp)) { save(); return { ok: false, error: 'That passcode is not right. ' + (6 - u.otpAttempts) + ' attempts left.' }; }
-    u.status = 'active'; u.verifiedAt = new Date().toISOString(); delete u.otp;
+    u.emailCode = code6(); u.codeAt = Date.now(); u.codeAttempts = 0;
+    delete u.otp; delete u.otpAt; delete u.otpAttempts;
+    if (u.status === 'otp-pending') u.status = 'email-pending';
     save();
-    audit(u.email, 'Parent phone number verified by one-time passcode', 'auth');
+    audit(u.email, 'Parent email verification code resent', 'auth');
+    return { ok: true, code: u.emailCode };
+  }
+  function verifyParentEmailCode(userId, entered) {
+    const u = state.users[userId];
+    if (!u) return { ok: false, error: 'Account not found.' };
+    const code = u.emailCode || u.otp;
+    const at = u.codeAt || u.otpAt;
+    if (Date.now() - at > 30 * 60 * 1000) return { ok: false, error: 'That code has expired. Send a new one.' };
+    u.codeAttempts = (u.codeAttempts || u.otpAttempts || 0) + 1;
+    if (u.codeAttempts > 5) return { ok: false, error: 'Too many attempts. Send a new code.' };
+    if (String(entered) !== String(code)) { save(); return { ok: false, error: 'That code is not right. ' + (6 - u.codeAttempts) + ' attempts left.' }; }
+    u.status = 'active'; u.verifiedAt = new Date().toISOString();
+    delete u.emailCode; delete u.otp; delete u.otpAt; delete u.otpAttempts;
+    save();
+    audit(u.email, 'Parent email verified', 'auth');
     session = { role: 'parent', userId: u.id, learnerId: null, pinVerifiedAt: 0 };
     return { ok: true, user: u };
   }
@@ -519,7 +527,7 @@
     load, save, reset, ensureProgress, ensureAp, bandName, audit, uid, today,
     signIn, signInChild, verifyPin, logout,
     signupSchool, approveSchool, rejectSchool,
-    signupParent, resendOtp, verifyOtp,
+    signupParent, resendParentEmailCode, verifyParentEmailCode,
     signupStudent13, resendEmailCode, verifyEmailCode,
     requestParentLink, pendingLinksFor, approveLink, declineLink, addLearner,
     recordResult, apEnroll, apDrop, recordApSet, apCourseSummary,

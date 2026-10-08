@@ -23,13 +23,15 @@ You will need: a database, real password hashing (never store plaintext — the 
 does, and must not ship that way), sessions or tokens, and server-side
 authorisation so a parent cannot read another family's data by changing an id.
 
-### 2. SMS and email delivery
+### 2. Email delivery (phone / SMS removed)
 
-OTP and email verification are fully implemented — six digits, expiry, attempt
-limits, resend — but the code is shown on screen instead of sent. Connect an SMS
-gateway (Twilio, MSG91) and a transactional email provider (Postmark, SES,
-Resend). The call sites are `signupParent` / `resendOtp` and `signupStudent13` /
-`resendEmailCode` in `store.js`.
+Parents and students 13+ verify by **email only** — six digits, expiry, attempt
+limits, resend. Phone / SMS verification has been removed from signup and UI.
+
+The Railway Node server exposes `POST /api/email/send`. Set `RESEND_API_KEY`
+(and optionally `EMAIL_FROM`) in Railway Variables to deliver real messages via
+Resend. Without the key, the UI shows the code on screen (demo fallback).
+See `.env.example`.
 
 ### 3. Verifiable parental consent (COPPA)
 

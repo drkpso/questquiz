@@ -18,7 +18,9 @@ ENV HOST=0.0.0.0
 ENV PORT=8080
 COPY --from=build /app/public ./public
 COPY scripts/serve.js ./scripts/serve.js
+COPY scripts/email.js ./scripts/email.js
 # Production start skips rebuild (public/ already in the image).
+# Optional email delivery: set RESEND_API_KEY (+ EMAIL_FROM) in Railway Variables.
 ENV SKIP_BUILD=1
 EXPOSE 8080
 CMD ["node", "scripts/serve.js"]

@@ -24,7 +24,7 @@ const ok = (n, c) => { console.log((c ? '  PASS' : '  FAIL') + ' — ' + n); if 
   ok('no ad slots anywhere', (await page.$$('.adslot')).length === 0);
   ok('internal design brief removed', (await page.$('.picture-lab')) === null);
   ok('privacy commitment present', (await page.content()).includes('No advertising on this platform'));
-  ok('verification explained', (await page.content()).includes('Parents verify by phone'));
+  ok('verification explained', (await page.content()).includes('Parents and students 13+ verify by email'));
   ok('AP unit proof restored', (await page.content()).includes('Unit 3 is the one to work on'));
   ok('body has an explicit background', await page.evaluate(() => {
     const bg = getComputedStyle(document.body).backgroundColor;
@@ -147,7 +147,6 @@ const ok = (n, c) => { console.log((c ? '  PASS' : '  FAIL') + ' — ' + n); if 
   await page.fill('#sc-contact', 'M Reyes');
   await page.fill('#sc-role', 'Principal');
   await page.fill('#sc-email', 'm@cypresscharter.edu');
-  await page.fill('#sc-phone', '+1 337 555 0122');
   await page.fill('#sc-students', '410');
   await page.fill('#sc-pass', 'pw12345');
   await page.click('button[type="submit"]');

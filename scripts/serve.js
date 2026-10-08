@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /* Static file server for local preview and Railway production. No dependencies.
    Rebuilds once on start (unless SKIP_BUILD=1), then serves public/.
+   Also exposes /api/email/* for Resend-backed verification (optional env).
    Pass --watch to rebuild automatically when anything in src/ changes.
    Railway: set HOST=0.0.0.0 and use the injected PORT (Dockerfile sets both). */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const email = require('./email');
 
 const ROOT = path.join(__dirname, '..');
 const DIR = path.join(ROOT, 'public');
@@ -55,8 +57,86 @@ if (WATCH) {
   console.log('Watching src/ for changes.');
 }
 
-http.createServer((req, res) => {
-  let rel = decodeURIComponent(req.url.split('?')[0]);
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', chunk => {
+      raw += chunk;
+      if (raw.length > 1e6) {
+        reject(new Error('Body too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (!raw) return resolve({});
+      try { resolve(JSON.parse(raw)); }
+      catch (e) { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.end(body);
+}
+
+async function handleApi(req, res, rel) {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+    res.end();
+    return true;
+  }
+
+  if (rel === '/api/email/status' && req.method === 'GET') {
+    sendJson(res, 200, {
+      ok: true,
+      configured: email.configured(),
+      from: email.configured() ? email.fromAddress() : null
+    });
+    return true;
+  }
+
+  if (rel === '/api/email/send' && req.method === 'POST') {
+    try {
+      const body = await readJson(req);
+      const result = await email.sendVerificationCode({
+        email: body.email,
+        code: body.code,
+        purpose: body.purpose
+      });
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e.message || 'Bad request' });
+    }
+    return true;
+  }
+
+  if (rel.startsWith('/api/')) {
+    sendJson(res, 404, { ok: false, error: 'Not found' });
+    return true;
+  }
+  return false;
+}
+
+http.createServer(async (req, res) => {
+  let rel = decodeURIComponent((req.url || '/').split('?')[0]);
+  try {
+    if (await handleApi(req, res, rel)) return;
+  } catch (e) {
+    sendJson(res, 500, { ok: false, error: e.message || 'Server error' });
+    return;
+  }
+
   if (rel.endsWith('/')) rel += 'index.html';
   // Resolve inside public/ only — never serve a path that escapes it.
   const file = path.join(DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
@@ -77,5 +157,7 @@ http.createServer((req, res) => {
     res.end(buf);
   });
 }).listen(PORT, HOST, () => {
-  console.log(`\n  QuestQuiz running at  http://${HOST}:${PORT}\n`);
+  const mode = email.configured() ? 'Resend email delivery ON' : 'email demo mode (set RESEND_API_KEY to send)';
+  console.log(`\n  QuestQuiz running at  http://${HOST}:${PORT}`);
+  console.log(`  ${mode}\n`);
 });

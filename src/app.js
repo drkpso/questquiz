@@ -166,7 +166,7 @@
         <div class="section-heading"><div><div class="eyebrow">HOW IT WORKS</div><h2>Four steps, then it runs itself.</h2></div></div>
         <div class="steps">
           ${[
-        ['Create an account', 'Parents verify by phone. Students 13 and over verify by email. Under 13 goes through a parent, who gives consent and holds the account. Schools are reviewed by hand before a class code is issued.'],
+        ['Create an account', 'Parents and students 13+ verify by email. Under 13 goes through a parent, who gives consent and holds the account. Schools are reviewed by hand before a class code is issued.'],
         ['Set the starting level', 'Every learner begins at level 1 of their grade band. A parent can move that up or down at any time, or switch bands entirely, without losing a badge.'],
         ['Take assessments', 'Fifty mixed questions. A PIN check first, every single time, so a result is always tied to the right learner.'],
         ['Clear levels, claim rewards', 'Pass five assessments at 80% to clear a level. The badge lands on the shelf and the rewards behind it open.']
@@ -322,7 +322,7 @@
   function signupRole() {
     const roles = [
       ['school', '🏫', 'School', 'For a school, district or learning centre. Reviewed by our team before your class code is issued.', 'Needs admin approval'],
-      ['parent', '🏡', 'Parent or guardian', 'Holds the family account. Add your children under it, set their level and create rewards.', 'Verified by a code sent to your phone'],
+      ['parent', '🏡', 'Parent or guardian', 'Holds the family account. Add your children under it, set their level and create rewards.', 'Verified by a code sent to your email'],
       ['student', '🚀', 'Student', 'Taking the assessments yourself, including AP practice if you are in high school.', '13+ verify by email · under 13 needs a parent']
     ];
     return authShell('Create your account', 'Choose the role that fits. It decides how we verify you.', `
@@ -345,7 +345,6 @@
           <label class="field">Your name<input type="text" id="sc-contact" required placeholder="Full name"></label>
           <label class="field">Your role at the school<input type="text" id="sc-role" required placeholder="Assistant Principal"></label>
           <label class="field">Official school email<input type="email" id="sc-email" required placeholder="you@school.edu"></label>
-          <label class="field">Phone<input type="tel" id="sc-phone" required placeholder="+1 337 555 0100"></label>
           <label class="field">Approximate students<input type="number" id="sc-students" min="1" required placeholder="640"></label>
           <label class="field">Password<input type="password" id="sc-pass" required minlength="6" placeholder="At least 6 characters"></label>
         </div>
@@ -376,38 +375,19 @@
       </div>`);
   }
 
-  /* ---------- parent signup + OTP ---------- */
+  /* ---------- parent signup + email verification ---------- */
   function signupParentView() {
     const pre = pub.data.prefillEmail || '';
-    return authShell('Create a parent account', 'One account holds the whole family. We verify your phone before it becomes active.', `
+    return authShell('Create a parent account', 'One account holds the whole family. We verify your email before it becomes active.', `
       <form class="card stack" data-act="doparent">
         ${pre ? `<div class="notice notice-info">You are setting this up so <b>${esc(pub.data.childName || 'your child')}</b> can start. Use the email the request was sent to.</div>` : ''}
         <label class="field">Your name<input type="text" id="pa-name" required placeholder="Full name"></label>
         <label class="field">Email address<input type="email" id="pa-email" required value="${esc(pre)}" placeholder="you@example.com"></label>
-        <label class="field">Mobile number<input type="tel" id="pa-phone" required placeholder="+1 337 555 0148"></label>
         <label class="field">Password<input type="password" id="pa-pass" required minlength="6" placeholder="At least 6 characters"></label>
-        <p class="tiny muted">We use the number only to verify the account and to send a code if you ever lose your password. It is never shared with partners.</p>
+        <p class="tiny muted">We email a six-digit code to confirm this address. No phone number or SMS is used.</p>
         <button class="btn btn-primary" type="submit">Send me a code</button>
         <button class="btn btn-ghost" type="button" data-act="pub" data-v="signup-role">← Choose a different role</button>
       </form>`);
-  }
-
-  function otpView() {
-    const u = st().users[pub.userId] || {};
-    return authShell('Check your phone', `We sent a six-digit code to ${esc(u.phone || 'your number')}.`, `
-      <div class="card stack">
-        <div class="codebox">
-          ${[0, 1, 2, 3, 4, 5].map(i => `<span class="codecell ${pub.pin.length > i ? 'filled' : ''}">${esc(pub.pin[i] || '')}</span>`).join('')}
-        </div>
-        <label class="field">Enter the code
-          <input type="text" id="otp-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" value="${esc(pub.pin)}" placeholder="000000" style="font-family:var(--mono);letter-spacing:.4em;text-align:center;font-size:1.2rem"></label>
-        <button class="btn btn-primary" data-act="dootp">Verify and continue</button>
-        <div class="between">
-          <button class="btn btn-ghost btn-sm" data-act="resendotp">Send a new code</button>
-          <span class="tiny muted">Codes expire after 10 minutes</span>
-        </div>
-        ${pub.demoCode ? `<div class="notice notice-info">Demo build — no SMS is sent. Your code is <b class="mono">${esc(pub.demoCode)}</b>.</div>` : ''}
-      </div>`);
   }
 
   /* ---------- student: age gate ---------- */
@@ -450,20 +430,26 @@
   }
 
   function emailVerifyView() {
-    const l = st().learners[pub.learnerId] || {};
-    return authShell('Verify your email', `We sent a six-digit code to ${esc(l.email || 'your inbox')}.`, `
+    const kind = pub.verifyKind || (pub.userId ? 'parent' : 'student');
+    const target = kind === 'parent'
+      ? (st().users[pub.userId] || {})
+      : (st().learners[pub.learnerId] || {});
+    const inbox = target.email || 'your inbox';
+    return authShell('Verify your email', `We sent a six-digit code to ${esc(inbox)}.`, `
       <div class="card stack">
         <div class="codebox">
           ${[0, 1, 2, 3, 4, 5].map(i => `<span class="codecell ${pub.pin.length > i ? 'filled' : ''}">${esc(pub.pin[i] || '')}</span>`).join('')}
         </div>
         <label class="field">Enter the code
-          <input type="text" id="ev-input" inputmode="numeric" maxlength="6" value="${esc(pub.pin)}" placeholder="000000" style="font-family:var(--mono);letter-spacing:.4em;text-align:center;font-size:1.2rem"></label>
-        <button class="btn btn-primary" data-act="doemailcode">Verify and start</button>
+          <input type="text" id="ev-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" value="${esc(pub.pin)}" placeholder="000000" style="font-family:var(--mono);letter-spacing:.4em;text-align:center;font-size:1.2rem"></label>
+        <button class="btn btn-primary" data-act="doemailcode">Verify and continue</button>
         <div class="between">
           <button class="btn btn-ghost btn-sm" data-act="resendemail">Send a new code</button>
           <span class="tiny muted">Codes expire after 30 minutes</span>
         </div>
-        ${pub.demoCode ? `<div class="notice notice-info">Demo build — no email is sent. Your code is <b class="mono">${esc(pub.demoCode)}</b>.</div>` : ''}
+        ${pub.demoCode
+      ? `<div class="notice notice-info">Demo mode — no outbound email is configured yet. Your code is <b class="mono">${esc(pub.demoCode)}</b>.</div>`
+      : `<div class="notice notice-good">Check your inbox (and spam folder). The code was emailed to <b>${esc(inbox)}</b>.</div>`}
       </div>`);
   }
 
@@ -1408,7 +1394,6 @@
           <div class="tablewrap"><table><tbody>
             <tr><td>Contact</td><td>${esc(p.contactName)}, ${esc(p.role)}</td></tr>
             <tr><td>Email</td><td class="mono tiny">${esc(p.email)}</td></tr>
-            <tr><td>Phone</td><td class="mono tiny">${esc(p.phone)}</td></tr>
           </tbody></table></div>
           <div class="notice notice-info">Check before approving: does the email domain belong to the school, and is this person authorised to enrol students?</div>
           <div class="btn-row"><button class="btn btn-primary" data-act="approveschool" data-id="${p.id}">Approve and issue a class code</button>
@@ -1737,7 +1722,7 @@
       if (v === 'signup-school') return signupSchoolView();
       if (v === 'school-submitted') return schoolSubmitted();
       if (v === 'signup-parent') return signupParentView();
-      if (v === 'parent-otp') return otpView();
+      if (v === 'parent-email' || v === 'parent-otp') return emailVerifyView();
       if (v === 'signup-student') return studentAge();
       if (v === 'student-13') return student13();
       if (v === 'student-email') return emailVerifyView();
@@ -1794,6 +1779,26 @@
 
   function goPub(v) { pub.view = v; pub.error = ''; pub.pin = ''; pub.taster = null; render(); window.scrollTo(0, 0); }
 
+  /* Ask the Railway Node server to email a code via Resend.
+     Without RESEND_API_KEY the API returns demo:true and we show the code on screen. */
+  async function deliverEmailCode(email, code, purpose) {
+    try {
+      const res = await fetch('/api/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, purpose })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        return { ok: false, demo: true, error: data.error || 'Email could not be sent.' };
+      }
+      return { ok: true, demo: Boolean(data.demo) };
+    } catch (_) {
+      // file:// preview or offline — keep the local demo code path
+      return { ok: true, demo: true };
+    }
+  }
+
   /* Repaint only the taster card. A full render would scroll the visitor back to
      the top of a long marketing page every time they answer a question. */
   function repaintTry() {
@@ -1843,8 +1848,14 @@
         toast('Signed in — welcome back.', 'good');
         return;
       }
-      if (res.resume === 'parent-otp') { pub.userId = res.userId; pub.demoCode = ''; goPub('parent-otp'); toast('Verify your phone to finish setting up.', 'bad'); return; }
-      if (res.resume === 'student-email') { pub.learnerId = res.learnerId; pub.demoCode = ''; goPub('student-email'); toast('Verify your email to finish setting up.', 'bad'); return; }
+      if (res.resume === 'parent-email' || res.resume === 'parent-otp') {
+        pub.userId = res.userId; pub.learnerId = null; pub.verifyKind = 'parent'; pub.demoCode = '';
+        goPub('parent-email'); toast('Verify your email to finish setting up.', 'bad'); return;
+      }
+      if (res.resume === 'student-email') {
+        pub.learnerId = res.learnerId; pub.userId = null; pub.verifyKind = 'student'; pub.demoCode = '';
+        goPub('student-email'); toast('Verify your email to finish setting up.', 'bad'); return;
+      }
       if (res.resume === 'school-pending') { pub.error = res.error; pub.view = 'signin'; render(); return; }
       pub.error = res.error; render();
     },
@@ -1852,7 +1863,7 @@
     doschool: () => {
       const f = {
         schoolName: val('sc-name'), district: val('sc-district'), contactName: val('sc-contact'),
-        role: val('sc-role'), email: val('sc-email'), phone: val('sc-phone'),
+        role: val('sc-role'), email: val('sc-email'),
         students: val('sc-students'), password: val('sc-pass')
       };
       const res = S.signupSchool(f);
@@ -1860,25 +1871,14 @@
       pub.data = f; goPub('school-submitted');
     },
 
-    doparent: () => {
-      const res = S.signupParent({ name: val('pa-name'), email: val('pa-email'), phone: val('pa-phone'), password: val('pa-pass') });
+    doparent: async () => {
+      const res = S.signupParent({ name: val('pa-name'), email: val('pa-email'), password: val('pa-pass') });
       if (!res.ok) { pub.error = res.error; render(); return; }
-      pub.userId = res.user.id; pub.demoCode = res.otp;
-      goPub('parent-otp');
-    },
-    dootp: () => {
-      const entered = val('otp-input') || pub.pin;
-      const res = S.verifyOtp(pub.userId, entered);
-      if (!res.ok) { pub.error = res.error; pub.pin = ''; render(); return; }
-      // pick up any child signup waiting on this email
-      const waiting = S.pendingLinksFor(res.user.email);
-      route = waiting.length ? 'approvals' : 'home';
-      pub.error = ''; pub.demoCode = ''; render(); window.scrollTo(0, 0);
-      toast(waiting.length ? 'Verified. A child signup is waiting for your consent.' : 'Phone verified — your account is active.', 'good');
-    },
-    resendotp: () => {
-      const res = S.resendOtp(pub.userId);
-      if (res.ok) { pub.demoCode = res.otp; pub.pin = ''; pub.error = ''; render(); toast('New code sent.'); }
+      pub.userId = res.user.id; pub.learnerId = null; pub.verifyKind = 'parent';
+      const sent = await deliverEmailCode(res.user.email, res.code, 'parent');
+      pub.demoCode = sent.demo ? res.code : '';
+      if (!sent.ok && sent.error) toast(sent.error, 'bad');
+      goPub('parent-email');
     },
 
     doage: () => {
@@ -1887,26 +1887,49 @@
       pub.data = { birthYear: yr, age };
       goPub(age < 13 ? 'student-u13' : 'student-13');
     },
-    dostudent13: () => {
+    dostudent13: async () => {
       const res = S.signupStudent13({
         name: val('s-name'), grade: val('s-grade'), email: val('s-email'), password: val('s-pass'),
         pin: val('s-pin'), avatar: val('s-av'), schoolCode: val('s-school'),
         parentEmail: val('s-parent'), consents: collectConsents()
       });
       if (!res.ok) { pub.error = res.error; render(); return; }
-      pub.learnerId = res.learner.id; pub.demoCode = res.code;
+      pub.learnerId = res.learner.id; pub.userId = null; pub.verifyKind = 'student';
+      const sent = await deliverEmailCode(res.learner.email, res.code, 'student');
+      pub.demoCode = sent.demo ? res.code : '';
+      if (!sent.ok && sent.error) toast(sent.error, 'bad');
       goPub('student-email');
     },
     doemailcode: () => {
       const entered = val('ev-input') || pub.pin;
-      const res = S.verifyEmailCode(pub.learnerId, entered);
+      const kind = pub.verifyKind || (pub.userId ? 'parent' : 'student');
+      const res = kind === 'parent'
+        ? S.verifyParentEmailCode(pub.userId, entered)
+        : S.verifyEmailCode(pub.learnerId, entered);
       if (!res.ok) { pub.error = res.error; pub.pin = ''; render(); return; }
+      if (kind === 'parent') {
+        const waiting = S.pendingLinksFor(res.user.email);
+        route = waiting.length ? 'approvals' : 'home';
+        pub.error = ''; pub.demoCode = ''; render(); window.scrollTo(0, 0);
+        toast(waiting.length ? 'Verified. A child signup is waiting for your consent.' : 'Email verified — your account is active.', 'good');
+        return;
+      }
       route = 'home'; pub.error = ''; pub.demoCode = ''; render(); window.scrollTo(0, 0);
       toast('Email verified. Welcome to QuestQuiz.', 'good');
     },
-    resendemail: () => {
-      const res = S.resendEmailCode(pub.learnerId);
-      if (res.ok) { pub.demoCode = res.code; pub.pin = ''; pub.error = ''; render(); toast('New code sent.'); }
+    resendemail: async () => {
+      const kind = pub.verifyKind || (pub.userId ? 'parent' : 'student');
+      const res = kind === 'parent'
+        ? S.resendParentEmailCode(pub.userId)
+        : S.resendEmailCode(pub.learnerId);
+      if (!res.ok) { pub.error = res.error; render(); return; }
+      const email = kind === 'parent'
+        ? (st().users[pub.userId] || {}).email
+        : (st().learners[pub.learnerId] || {}).email;
+      const sent = await deliverEmailCode(email, res.code, kind);
+      pub.demoCode = sent.demo ? res.code : '';
+      pub.pin = ''; pub.error = ''; render();
+      toast(sent.demo ? 'New demo code ready.' : 'New code emailed.');
     },
 
     dou13: () => {
