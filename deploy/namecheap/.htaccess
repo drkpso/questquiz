@@ -1,0 +1,41 @@
+# QuestQuiz — Apache / Namecheap cPanel (Stellar / shared hosting)
+# Copied into public/ by `npm run build`. Upload with the rest of public_html.
+
+Options -MultiViews
+DirectoryIndex index.html
+
+# Pretty 404 for missing paths
+ErrorDocument 404 /404.html
+
+# Force HTTPS (Namecheap AutoSSL / Let's Encrypt)
+RewriteEngine On
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Canonical host: www.learnassessment.com
+RewriteCond %{HTTP_HOST} ^learnassessment\.com$ [NC]
+RewriteRule ^ https://www.learnassessment.com%{REQUEST_URI} [L,R=301]
+
+# Security headers (Apache 2.4+)
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header set X-Frame-Options "SAMEORIGIN"
+</IfModule>
+
+# Cache static assets; never hard-cache the app shell
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 day"
+  ExpiresByType application/javascript "access plus 1 day"
+  ExpiresByType text/javascript "access plus 1 day"
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "public, max-age=0, must-revalidate"
+  </FilesMatch>
+</IfModule>

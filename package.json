@@ -1,0 +1,24 @@
+{
+  "name": "questquiz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "K-12 assessment platform across eight subjects with levels, badges, partner-funded rewards and unit-level AP practice.",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "dev": "HOST=127.0.0.1 node scripts/serve.js --watch",
+    "serve": "node scripts/serve.js",
+    "start": "HOST=0.0.0.0 node scripts/serve.js",
+    "preview": "PORT=43123 HOST=127.0.0.1 node scripts/serve.js",
+    "pack:namecheap": "node scripts/pack-namecheap.js",
+    "test": "npm run test:content && npm run test:browser",
+    "test:content": "node test/content.test.js",
+    "test:browser": "node scripts/build.js && node test/browser.test.js",
+    "test:nofonts": "node scripts/build.js && node test/nofonts.test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,26 @@
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' }).catch(() => chromium.launch());
+  const p = await b.newPage({ viewport: { width: 1280, height: 900 } });
+  await p.route('**fonts.googleapis.com**', r => r.abort());
+  await p.route('**fonts.gstatic.com**', r => r.abort());
+  const errs = [];
+  p.on('pageerror', e => errs.push(String(e)));
+  await p.goto('file://' + path.join(__dirname, '..', 'public', 'index.html'));
+  await p.waitForTimeout(900);
+  const ok = (n, c) => console.log((c ? '  PASS' : '  FAIL') + ' — ' + n);
+  console.log('WITH GOOGLE FONTS BLOCKED');
+  ok('page still renders the hero', (await p.textContent('h1')).includes('more like a'));
+  ok('no horizontal scroll', await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  const fam = await p.evaluate(() => getComputedStyle(document.querySelector('h1')).fontFamily);
+  ok('heading falls back to a real stack: ' + fam, /Trebuchet|Verdana|sans-serif/i.test(fam));
+  ok('no JS errors', errs.length === 0);
+  await p.click('button[data-v="signin"]');
+  await p.fill('#si-email', 'kabir@example.com');
+  await p.fill('#si-pass', 'student123');
+  await p.click('button[type="submit"]');
+  await p.waitForTimeout(500);
+  ok('sign-in works', (await p.textContent('h1')).includes('Ready for a quest'));
+  await b.close();
+})();

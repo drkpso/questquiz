@@ -1,0 +1,9 @@
+# Netlify. Connect the repo, or drag the public/ folder onto app.netlify.com/drop.
+[build]
+  command = "npm run build"
+  publish = "public"
+
+[[redirects]]
+  from = "/*"
+  to = "/404.html"
+  status = 404

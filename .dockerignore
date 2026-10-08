@@ -1,0 +1,16 @@
+node_modules
+public
+.git
+.github
+.cursor
+test
+*.log
+.env
+.env.*
+deploy/namecheap/upload
+deploy/namecheap/questquiz-public_html.zip
+docs
+AGENTS.md
+CLAUDE.md
+netlify.toml
+vercel.json
