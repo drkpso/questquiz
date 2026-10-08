@@ -8,6 +8,47 @@
   const today = () => new Date().toISOString().slice(0, 10);
   const code6 = () => String(Math.floor(100000 + Math.random() * 900000));
 
+  /** Child login IDs: 3–24 chars, lowercase letters/digits/_/- */
+  function normalizeLoginId(raw) {
+    return String(raw || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, '');
+  }
+  function validLoginId(id) {
+    return /^[a-z0-9][a-z0-9_-]{2,23}$/.test(id);
+  }
+  function findLearnerByLoginId(loginId) {
+    const id = normalizeLoginId(loginId);
+    if (!id) return null;
+    return Object.values(state.learners).find(l => l.loginId && normalizeLoginId(l.loginId) === id) || null;
+  }
+  function suggestLoginId(name, learnersMap) {
+    const base = normalizeLoginId(name).replace(/^_+|_+$/g, '') || 'learner';
+    const stem = base.slice(0, 20);
+    const pool = learnersMap || (state && state.learners) || {};
+    const taken = id => Object.values(pool).some(l => l.loginId && normalizeLoginId(l.loginId) === id);
+    if (validLoginId(stem) && !taken(stem)) return stem;
+    for (let i = 2; i < 100; i++) {
+      const cand = (stem.slice(0, 20) + i).slice(0, 24);
+      if (validLoginId(cand) && !taken(cand)) return cand;
+    }
+    return ('kid_' + Math.random().toString(36).slice(2, 8));
+  }
+  function migrateLearnerLogins(st) {
+    Object.values(st.learners || {}).forEach(l => {
+      if (l.loginId && validLoginId(normalizeLoginId(l.loginId))) {
+        l.loginId = normalizeLoginId(l.loginId);
+        delete l.needsLoginSetup;
+        return;
+      }
+      l.loginId = l.loginId ? normalizeLoginId(l.loginId) : '';
+      if (!validLoginId(l.loginId)) {
+        l.needsLoginSetup = true;
+        l.suggestedLoginId = suggestLoginId(l.name, st.learners);
+        l.loginId = '';
+      }
+    });
+    return st;
+  }
+
   const DEFAULT_SETTINGS = {
     passMark: 80,
     assessmentsToClear: 5,
@@ -60,10 +101,10 @@
       consent: { version: st.settings.consentVersion, at: new Date().toISOString(), by: parent.email, items: { terms: true, privacy: true, coppa: true, progress: true, rewards: true, schoolshare: true } }
     }, extra || {});
 
-    const aarav = mkLearner('l_aarav', 'Aarav', '7', '2468', '🦊');
+    const aarav = mkLearner('l_aarav', 'Aarav', '7', '2468', '🦊', { loginId: 'aarav' });
     const kabir = mkLearner('l_kabir', 'Kabir', '11', '9021', '🦉', {
       under13: false, selfManaged: true, email: 'kabir@example.com', password: 'student123',
-      verifiedAt: new Date().toISOString()
+      verifiedAt: new Date().toISOString(), loginId: 'kabir'
     });
     st.learners[aarav.id] = aarav;
     st.learners[kabir.id] = kabir;
@@ -158,7 +199,14 @@
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) { const p = JSON.parse(raw); if (p && p.version === 2) { state = p; return state; } }
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p && p.version === 2) {
+          state = migrateLearnerLogins(p);
+          save();
+          return state;
+        }
+      }
     } catch (e) { /* private window or blocked storage — run from memory */ }
     state = seed(); save(); return state;
   }
@@ -205,12 +253,35 @@
     return { ok: false, error: 'No account found for that email. Create one instead.' };
   }
 
-  function signInChild(learnerId, pin) {
+  function signInChild(loginId, pin) {
+    const id = normalizeLoginId(loginId);
+    if (!validLoginId(id)) return { ok: false, error: 'Enter the login ID your parent gave you.' };
+    const l = findLearnerByLoginId(id);
+    if (!l || l.status !== 'active') return { ok: false, error: 'That login ID or code is not right. Ask a parent for help.' };
+    if (l.needsLoginSetup || !l.loginId) return { ok: false, error: 'A parent still needs to finish setting up this login. Ask them to open Family → Login details.' };
+    if (String(l.pin) !== String(pin)) return { ok: false, error: 'That login ID or code is not right. Ask a parent for help.' };
+    session = { role: 'child', userId: l.parentId, learnerId: l.id, pinVerifiedAt: Date.now() };
+    audit(l.loginId, 'Learner signed in with login ID + code', 'auth');
+    return { ok: true, learner: l };
+  }
+
+  function setLearnerCredentials(learnerId, { loginId, pin }) {
     const l = state.learners[learnerId];
-    if (!l) return { ok: false, error: 'That learner profile no longer exists.' };
-    if (String(l.pin) !== String(pin)) return { ok: false, error: 'That PIN is not right. Ask a parent if you have forgotten it.' };
-    session = { role: 'child', userId: l.parentId, learnerId, pinVerifiedAt: Date.now() };
-    audit(l.name, 'Learner signed in with a family PIN', 'auth');
+    if (!l) return { ok: false, error: 'Learner not found.' };
+    const id = normalizeLoginId(loginId);
+    if (!validLoginId(id)) return { ok: false, error: 'Login ID must be 3–24 characters: letters, numbers, _ or -.' };
+    const other = findLearnerByLoginId(id);
+    if (other && other.id !== learnerId) return { ok: false, error: 'That login ID is already used by another learner on this device.' };
+    if (pin != null && pin !== '') {
+      if (!/^\d{4}$/.test(String(pin))) return { ok: false, error: 'The code must be exactly 4 digits.' };
+      l.pin = String(pin);
+    }
+    l.loginId = id;
+    delete l.needsLoginSetup;
+    delete l.suggestedLoginId;
+    save();
+    const parent = state.users[l.parentId];
+    audit((parent && parent.email) || 'parent', `Set login ID for ${l.name} to ${id}`, 'account');
     return { ok: true, learner: l };
   }
 
@@ -301,9 +372,11 @@
       return { ok: false, error: 'The required consents must be accepted to create an account.' };
     const school = Object.values(state.schools).find(s => s.code.toUpperCase() === String(f.schoolCode || '').toUpperCase());
     const codeV = code6();
+    let loginId = normalizeLoginId(f.loginId || String(f.email || '').split('@')[0] || f.name);
+    if (!validLoginId(loginId) || findLearnerByLoginId(loginId)) loginId = suggestLoginId(f.name);
     const l = {
       id: uid('l'), name: f.name, grade: f.grade, band: C.GRADE_TO_BAND[f.grade],
-      pin: f.pin, avatar: f.avatar || '🦉', email: f.email, password: f.password,
+      pin: f.pin, loginId, avatar: f.avatar || '🦉', email: f.email, password: f.password,
       parentId: null, schoolId: school ? school.id : null, under13: false, selfManaged: true,
       status: 'email-pending', emailCode: codeV, codeAt: Date.now(), codeAttempts: 0,
       xp: 0, streak: 0, badges: [], recoveryQueue: [], history: [], progress: {},
@@ -346,14 +419,15 @@
   function pendingLinksFor(email) {
     return state.linkRequests.filter(r => r.status === 'awaiting parent' && r.parentEmail.toLowerCase() === String(email || '').toLowerCase());
   }
-  function approveLink(reqId, consents) {
+  function approveLink(reqId, consents, loginId) {
     const r = state.linkRequests.find(x => x.id === reqId);
     if (!r) return { ok: false, error: 'That request is no longer pending.' };
     const parent = state.users[session.userId];
     if (!consents.coppa) return { ok: false, error: 'A child under 13 cannot be activated without verifiable parental consent.' };
     const res = addLearner(parent.id, {
       name: r.childName, grade: r.grade, pin: r.pin, avatar: r.avatar,
-      birthYear: r.birthYear, schoolCode: r.schoolCode, consents
+      birthYear: r.birthYear, schoolCode: r.schoolCode, consents,
+      loginId: loginId || r.loginId || suggestLoginId(r.childName)
     });
     if (!res.ok) return res;
     r.status = 'approved'; r.learnerId = res.learner.id; r.approvedAt = today();
@@ -373,10 +447,14 @@
     const under13 = age < 13;
     if (under13 && !f.consents.coppa) return { ok: false, error: 'A child under 13 cannot be registered without verifiable parental consent.' };
     if (!f.consents.terms || !f.consents.privacy || !f.consents.progress) return { ok: false, error: 'The required consents must be accepted to create a learner profile.' };
+    if (!/^\d{4}$/.test(String(f.pin || ''))) return { ok: false, error: 'The login code must be exactly 4 digits.' };
+    const loginId = normalizeLoginId(f.loginId || suggestLoginId(f.name));
+    if (!validLoginId(loginId)) return { ok: false, error: 'Choose a login ID (3–24 characters: letters, numbers, _ or -).' };
+    if (findLearnerByLoginId(loginId)) return { ok: false, error: 'That login ID is already taken. Pick another.' };
     const school = Object.values(state.schools).find(s => s.code.toUpperCase() === String(f.schoolCode || '').toUpperCase());
     const l = {
       id: uid('l'), name: f.name, grade: f.grade, band: C.GRADE_TO_BAND[f.grade],
-      pin: f.pin, avatar: f.avatar || '🐣', parentId, schoolId: school ? school.id : null,
+      pin: String(f.pin), loginId, avatar: f.avatar || '🐣', parentId, schoolId: school ? school.id : null,
       under13, status: 'active', xp: 0, streak: 0, badges: [], recoveryQueue: [], history: [],
       progress: {}, ap: { enrolled: [], courses: {} }, createdAt: today(),
       consent: { version: state.settings.consentVersion, at: new Date().toISOString(), by: parent.email, items: f.consents }
@@ -386,7 +464,7 @@
     parent.children = parent.children || [];
     parent.children.push(l.id);
     save();
-    audit(parent.email, `${under13 ? 'Verifiable parental consent recorded' : 'Consent recorded'} for ${f.name} (grade ${f.grade})`, 'consent');
+    audit(parent.email, `${under13 ? 'Verifiable parental consent recorded' : 'Consent recorded'} for ${f.name} (grade ${f.grade}); login ID ${loginId}`, 'consent');
     return { ok: true, learner: l };
   }
 
@@ -530,6 +608,7 @@
     signupParent, resendParentEmailCode, verifyParentEmailCode,
     signupStudent13, resendEmailCode, verifyEmailCode,
     requestParentLink, pendingLinksFor, approveLink, declineLink, addLearner,
+    setLearnerCredentials, normalizeLoginId, validLoginId, suggestLoginId, findLearnerByLoginId,
     recordResult, apEnroll, apDrop, recordApSet, apCourseSummary,
     rewardsFor, claimReward, grantsFor, setGrantStatus, placeOrder,
     findUserByEmail, CONSENT_ITEMS, DEFAULT_SETTINGS

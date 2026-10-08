@@ -305,7 +305,7 @@
         <hr class="hr">
         <div class="center stack" style="gap:8px">
           <p class="tiny muted">Younger children sign in on the family device with their own PIN.</p>
-          <button class="btn btn-ghost" type="button" data-act="pub" data-v="kidpick">🚀 A child is signing in with a PIN</button>
+          <button class="btn btn-ghost" type="button" data-act="pub" data-v="kidlogin">🚀 A child is signing in with a login ID</button>
           <button class="btn btn-ghost btn-sm" type="button" data-act="pub" data-v="signup-role">No account yet? Create one</button>
         </div>
       </form>
@@ -492,31 +492,23 @@
       </div>`);
   }
 
-  /* ---------- child PIN sign-in ---------- */
-  function kidPick() {
-    const kids = Object.values(st().learners).filter(l => l.status === 'active');
-    return authShell('Who is learning today?', 'Tap your name, then enter your PIN.', `
-      <div class="card"><div class="kid-grid">
-        ${kids.map(k => `<button class="kid-card" data-act="pickkid" data-id="${k.id}">
-          <span class="kid-av">${k.avatar}</span><b>${esc(k.name)}</b>
-          <span class="tiny muted">Grade ${esc(k.grade)}</span></button>`).join('')}
-      </div></div>
-      <div class="center"><button class="btn btn-ghost" data-act="pub" data-v="signin">← Sign in with an email instead</button></div>`, 600);
-  }
-
-  function kidPin() {
-    const k = st().learners[pub.learnerId];
-    return authShell(`Hi, ${esc(k.name)}`, 'Enter your 4-digit PIN', `
-      <div class="card">
-        <div class="center" style="font-size:3rem;line-height:1">${k.avatar}</div>
-        <div class="pindots">${[0, 1, 2, 3].map(i => `<i class="${pub.pin.length > i ? 'on' : ''}"></i>`).join('')}</div>
+  /* ---------- child login ID + code (no profile directory) ---------- */
+  function kidLogin() {
+    return authShell('Child sign-in', 'Enter the login ID and 4-digit code your parent gave you. We never list other children’s profiles here.', `
+      <form class="card stack" data-act="dokidlogin">
+        <label class="field">Login ID<input type="text" id="kid-login" required autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="e.g. aarav" value="${esc(pub.data.draftKidLogin || '')}"></label>
+        <label class="field">4-digit code
+          <input type="password" id="kid-pin" required inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="••••" value="${esc(pub.pin || '')}">
+        </label>
+        <div class="pindots">${[0, 1, 2, 3].map(i => `<i class="${(pub.pin || '').length > i ? 'on' : ''}"></i>`).join('')}</div>
         <div class="pinpad">
-          ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin" data-n="${n}">${n}</button>`).join('')}
-          <button data-act="pinclear">✕</button><button data-act="pin" data-n="0">0</button><button data-act="pinback">⌫</button>
+          ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-act="kidpad" data-n="${n}">${n}</button>`).join('')}
+          <button type="button" data-act="kidpadclear">✕</button><button type="button" data-act="kidpad" data-n="0">0</button><button type="button" data-act="kidpadback">⌫</button>
         </div>
-        <p class="tiny muted center" style="margin-top:14px">Demo PIN for ${esc(k.name)}: <span class="demo-key">${k.pin}</span></p>
-      </div>
-      <div class="center"><button class="btn btn-ghost" data-act="pub" data-v="kidpick">← Someone else</button></div>`, 420);
+        <button class="btn btn-primary" type="submit">Sign in</button>
+        <p class="tiny muted">Ask a parent for your login ID and code. They can see and reset them under Family → each child’s Login details.</p>
+      </form>
+      <div class="center"><button class="btn btn-ghost" data-act="pub" data-v="signin">← Sign in with an email instead</button></div>`, 440);
   }
 
   function consentBlock(under13) {
@@ -936,7 +928,7 @@
         ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="epin" data-n="${n}">${n}</button>`).join('')}
         <button data-act="epinclear">✕</button><button data-act="epin" data-n="0">0</button><button data-act="epinback">⌫</button>
       </div>
-      <p class="tiny muted center">Demo PIN: <span class="demo-key">${kid().pin}</span></p>
+      <p class="tiny muted center">Enter the same 4-digit code you use to sign in.</p>
       <button class="btn btn-ghost" data-act="cancelexam">Not now</button>
     </div></div>`;
   }
@@ -1069,6 +1061,8 @@
         <button class="btn btn-sm btn-primary" data-act="go" data-route="approvals">Review</button></div>` : ''}
       ${pend.length ? `<div class="notice notice-info">${pend.length} family reward${pend.length > 1 ? 's are' : ' is'} waiting to be granted.
         <button class="btn btn-sm btn-teal" data-act="go" data-route="approvals">Review</button></div>` : ''}
+      ${kids.some(k => k.needsLoginSetup) ? `<div class="notice notice-warn"><b>Login setup needed.</b> Some children still need a login ID before they can sign in. Open Login details on their card — we suggest an ID you can confirm or change.</div>` : ''}
+      <div class="notice notice-info"><b>How kids sign in:</b> Share each child’s <b>login ID</b> and <b>4-digit code</b> privately (not on a shared screen). They use Sign in → “A child is signing in with a login ID”. Profiles are never listed on that page.</div>
       <div class="grid g2">
         ${kids.length ? kids.map(k => {
       const p = S.ensureProgress(k, k.band), need = st().settings.assessmentsToClear;
@@ -1078,7 +1072,10 @@
       return `<div class="card stack">
             <div class="row"><span style="font-size:2.2rem">${k.avatar}</span>
               <div><b style="font-family:var(--display);font-size:1.2rem">${esc(k.name)}</b>
-              <div class="tiny muted">Grade ${esc(k.grade)} · ${esc(bandOf(k.band).name)} · ${k.under13 ? 'under 13 — consent on file' : '13 or older'}</div></div></div>
+              <div class="tiny muted">Grade ${esc(k.grade)} · ${esc(bandOf(k.band).name)} · ${k.under13 ? 'under 13 — consent on file' : '13 or older'}</div>
+              <div class="tiny">${k.needsLoginSetup
+        ? `<span class="pill pill-warn">Needs login ID</span> suggested: <span class="mono">${esc(k.suggestedLoginId || '')}</span>`
+        : `Login ID <span class="mono">${esc(k.loginId || '—')}</span>`}</div></div></div>
             <div class="grid g3">
               <div class="stat"><b class="mono">${p.level}</b><span>Level</span></div>
               <div class="stat"><b class="mono">${avg}%</b><span>Average</span></div>
@@ -1091,6 +1088,7 @@
         return `<span class="pill pill-violet">${esc(c.abbr)}${s.projected ? ' · ' + s.projected : ''}</span>`;
       }).join('')}</div>` : ''}
             <div class="btn-row">
+              <button class="btn btn-sm btn-primary" data-act="editlogin" data-id="${k.id}">Login details</button>
               <button class="btn btn-sm btn-teal" data-act="focuskid" data-id="${k.id}" data-route="progress">Progress</button>
               <button class="btn btn-sm btn-ghost" data-act="focuskid" data-id="${k.id}" data-route="myrewards">Rewards</button>
               <button class="btn btn-sm btn-ghost" data-act="focuskid" data-id="${k.id}" data-route="setlevel">Level</button>
@@ -1213,7 +1211,10 @@
           <div class="between"><div><b style="font-family:var(--display);font-size:1.05rem">${r.avatar} ${esc(r.childName)}</b>
             <div class="tiny muted">Grade ${esc(r.grade)} · born ${r.birthYear} · requested ${r.at}${r.schoolCode ? ' · school code ' + esc(r.schoolCode) : ''}</div></div>
             <span class="pill pill-warn">Under 13</span></div>
-          <p class="tiny muted">${esc(r.childName)} asked to join QuestQuiz. Nothing has been created yet. Approving this records your verifiable parental consent and creates the profile under your account.</p>
+          <p class="tiny muted">${esc(r.childName)} asked to join QuestQuiz. Nothing has been created yet. Approving this records your verifiable parental consent and creates the profile under your account. Choose a login ID they will use with their 4-digit code (PIN they picked: <span class="mono">${esc(r.pin)}</span>).</p>
+          <label class="field">Login ID for ${esc(r.childName)}
+            <input type="text" id="alink-login-${r.id}" required autocapitalize="off" spellcheck="false" value="${esc(S.suggestLoginId(r.childName))}" placeholder="e.g. nina">
+          </label>
           <div class="card-flat" style="background:var(--surface)">
             ${S.CONSENT_ITEMS.map(ci => `<label class="checkline">
               <input type="checkbox" data-consent="${ci.id}" data-req="${r.id}" ${ci.required ? 'data-required="1"' : ''}>
@@ -1671,15 +1672,36 @@
         <label class="field">Child's first name<input type="text" id="c-name" required placeholder="First name only"></label>
         <label class="field">Grade<select id="c-grade">${C.ACTIVE_GRADES.map(g => `<option value="${g}">Grade ${g}</option>`).join('')}</select></label>
         <label class="field">Year of birth<select id="c-year">${Array.from({ length: 16 }, (_, i) => yr - 4 - i).map(y => `<option value="${y}">${y}</option>`).join('')}</select></label>
-        <label class="field">4-digit PIN<input type="text" id="c-pin" required pattern="[0-9]{4}" maxlength="4" inputmode="numeric" placeholder="e.g. 4821"></label>
+        <label class="field">Login ID<input type="text" id="c-login" required autocapitalize="off" spellcheck="false" placeholder="e.g. aarav" value="${esc(pub.data.draftLogin || '')}"></label>
+        <label class="field">4-digit login code<input type="text" id="c-pin" required pattern="[0-9]{4}" maxlength="4" inputmode="numeric" placeholder="e.g. 4821"></label>
         <label class="field">Avatar<select id="c-av">${['🦊', '🐙', '🐢', '🦉', '🐝', '🦖', '🐼', '🦄', '🐧', '🐳'].map(a => `<option>${a}</option>`).join('')}</select></label>
         <label class="field">School code <span class="muted" style="font-weight:600">(optional)</span><input type="text" id="c-school" placeholder="MAPLE-24"></label>
       </div>
+      <p class="tiny muted">Share the login ID and code with your child privately. They sign in with those — other kids’ names are never shown on the public child login page. The same 4-digit code is used before assessments.</p>
       ${consentBlock(true)}
       <p class="tiny muted">On a live deployment the COPPA step hands off to a certified verification provider before the profile activates. This build records the consent, its version and its timestamp in the ledger.</p>
       <div class="btn-row"><button class="btn btn-primary" type="submit">Create learner profile</button>
       <button class="btn btn-ghost" type="button" data-act="cancelchild">Cancel</button></div>
     </form>`;
+  }
+
+  function loginDetailsModal(learnerId) {
+    const k = st().learners[learnerId];
+    if (!k) return '';
+    const suggested = k.suggestedLoginId || S.suggestLoginId(k.name);
+    const current = k.loginId || suggested;
+    return `<div class="modal-bg" data-act="closemodal"><div class="modal stack" data-stop="1">
+      <div class="between"><h2>Login details — ${esc(k.name)}</h2><button class="btn btn-sm btn-ghost" data-act="closemodal">Close</button></div>
+      ${k.needsLoginSetup ? `<div class="notice notice-warn">This profile was created before login IDs. Confirm or edit the suggested ID, set a code, then save. Until then they cannot use child sign-in.</div>` : ''}
+      <form class="stack" data-act="savelogin" data-id="${k.id}">
+        <label class="field">Login ID<input type="text" id="lg-id" required autocapitalize="off" spellcheck="false" value="${esc(current)}"></label>
+        <label class="field">4-digit code <span class="muted">(leave blank to keep current)</span>
+          <input type="text" id="lg-pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="${k.needsLoginSetup ? 'Required — e.g. 4821' : '••••'}" ${k.needsLoginSetup ? 'required' : ''}></label>
+        <p class="tiny muted">Tell ${esc(k.name)}: Sign in → child login → enter <span class="mono">${esc(current)}</span> and their code. Do not post this on a classroom board.</p>
+        <div class="btn-row"><button class="btn btn-primary" type="submit">Save login</button>
+        <button class="btn btn-ghost" type="button" data-act="closemodal">Cancel</button></div>
+      </form>
+    </div></div>`;
   }
 
   function printSheet(band, lv) {
@@ -1728,8 +1750,7 @@
       if (v === 'student-email') return emailVerifyView();
       if (v === 'student-u13') return studentU13();
       if (v === 'u13-submitted') return u13Submitted();
-      if (v === 'kidpick') return kidPick();
-      if (v === 'kidpin') return kidPin();
+      if (v === 'kidlogin' || v === 'kidpick' || v === 'kidpin') return kidLogin();
       return landing();
     }
     if (exam) return shell(exam._needPin ? examVerify() : examRunner());
@@ -1950,19 +1971,46 @@
       goPub('signup-parent');
     },
 
-    pickkid: el => { pub.learnerId = el.dataset.id; goPub('kidpin'); },
-    pin: el => {
-      if (pub.pin.length >= 4) return;
-      pub.pin += el.dataset.n;
-      if (pub.pin.length === 4) {
-        const res = S.signInChild(pub.learnerId, pub.pin);
-        if (res.ok) { route = 'home'; pub.pin = ''; pub.error = ''; render(); toast('Welcome back, ' + res.learner.name + '!', 'good'); return; }
-        pub.error = res.error; pub.pin = '';
-      }
+    kidpad: el => {
+      if ((pub.pin || '').length >= 4) return;
+      pub.data = Object.assign({}, pub.data, { draftKidLogin: val('kid-login') || pub.data.draftKidLogin || '' });
+      pub.pin = (pub.pin || '') + el.dataset.n;
       render();
     },
-    pinback: () => { pub.pin = pub.pin.slice(0, -1); render(); },
-    pinclear: () => { pub.pin = ''; pub.error = ''; render(); },
+    kidpadback: () => {
+      pub.data = Object.assign({}, pub.data, { draftKidLogin: val('kid-login') || pub.data.draftKidLogin || '' });
+      pub.pin = (pub.pin || '').slice(0, -1);
+      render();
+    },
+    kidpadclear: () => {
+      pub.data = Object.assign({}, pub.data, { draftKidLogin: val('kid-login') || pub.data.draftKidLogin || '' });
+      pub.pin = '';
+      render();
+    },
+    dokidlogin: () => {
+      const loginId = val('kid-login');
+      const pin = val('kid-pin') || pub.pin || '';
+      pub.data = Object.assign({}, pub.data, { draftKidLogin: loginId });
+      const res = S.signInChild(loginId, pin);
+      if (res.ok) {
+        route = 'home'; pub.pin = ''; pub.error = ''; pub.data.draftKidLogin = '';
+        render(); window.scrollTo(0, 0);
+        toast('Welcome back, ' + res.learner.name + '!', 'good');
+        return;
+      }
+      pub.error = res.error; pub.pin = ''; render();
+    },
+    editlogin: el => { modal = loginDetailsModal(el.dataset.id); render(); },
+    savelogin: el => {
+      const pin = val('lg-pin');
+      const res = S.setLearnerCredentials(el.dataset.id, {
+        loginId: val('lg-id'),
+        pin: pin || undefined
+      });
+      if (!res.ok) { toast(res.error, 'bad'); return; }
+      modal = null; render();
+      toast('Saved. Share login ID “' + res.learner.loginId + '” and the code with ' + res.learner.name + ' privately.', 'good');
+    },
 
     /* ----- shell ----- */
     go: el => { route = el.dataset.route; modal = null; render(); window.scrollTo(0, 0); },
@@ -2096,20 +2144,25 @@
     addchild: () => { route = 'addchild'; pub.error = ''; render(); },
     cancelchild: () => { route = 'home'; pub.error = ''; render(); },
     doaddchild: () => {
+      const loginId = val('c-login');
+      pub.data = Object.assign({}, pub.data, { draftLogin: loginId });
       const res = S.addLearner(S.session.userId, {
         name: val('c-name'), grade: val('c-grade'), pin: val('c-pin'), avatar: val('c-av'),
-        birthYear: val('c-year'), schoolCode: val('c-school'), consents: collectConsents()
+        birthYear: val('c-year'), schoolCode: val('c-school'), loginId,
+        consents: collectConsents()
       });
       if (!res.ok) { pub.error = res.error; render(); return; }
-      pub.error = ''; parentFocus = res.learner.id; route = 'home'; render();
-      toast(res.learner.name + ' is set up and ready to start.', 'good');
+      pub.error = ''; pub.data.draftLogin = ''; parentFocus = res.learner.id; route = 'home'; render();
+      toast(res.learner.name + ' is ready. Login ID: ' + res.learner.loginId, 'good');
     },
     approvelink: el => {
       const consents = {};
       document.querySelectorAll(`[data-consent][data-req="${el.dataset.id}"]`).forEach(c => consents[c.dataset.consent] = c.checked);
-      const res = S.approveLink(el.dataset.id, consents);
+      const loginEl = document.getElementById('alink-login-' + el.dataset.id);
+      const loginId = loginEl ? loginEl.value.trim() : '';
+      const res = S.approveLink(el.dataset.id, consents, loginId);
       if (!res.ok) { toast(res.error, 'bad'); return; }
-      render(); toast(res.learner.name + ' is set up and can sign in with their PIN.', 'good');
+      render(); toast(res.learner.name + ' can sign in with login ID “' + res.learner.loginId + '” and their code.', 'good');
     },
     declinelink: el => { S.declineLink(el.dataset.id); render(); toast('Request declined.'); },
     savelevel: el => {
