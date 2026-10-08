@@ -110,11 +110,23 @@ dig learnassessment.com +short   # redirect/ALIAS behaviour varies
 
 ---
 
-## 5. Verify go-live
+## 5. Railway Variables + Volume
 
-- `https://<service>.up.railway.app` — homepage, **Try 3 questions**, theme
-- `https://www.learnassessment.com` — same after DNS + SSL
-- Sign in: `kabir@example.com` / `student123`
+| Variable | Notes |
+|---|---|
+| `RESEND_API_KEY` | Required for parent/student email verification |
+| `EMAIL_FROM` | e.g. `QuestQuiz <noreply@learnassessment.com>` |
+| `DATA_DIR` | Default `/data` in the image — mount a Volume there |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap admin for school approvals |
+
+Create a Railway Volume, mount path `/data`, redeploy.
+
+## 6. Verify go-live
+
+- `https://www.learnassessment.com` — homepage, **Try 3 questions**, theme
+- `GET /api/status` → `serverBacked: true`, `emailConfigured: true`
+- Create a real parent account → code arrives by email only (not on screen)
+- Child login requires login ID + code (no profile listing)
 - Bad path → styled 404
 - Apex redirect (if configured) → `https://www.learnassessment.com`
 

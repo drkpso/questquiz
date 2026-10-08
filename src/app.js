@@ -7,12 +7,13 @@
   const toastHost = document.getElementById('toasts');
 
   let route = 'home';
-  let pub = { view: 'landing', error: '', data: {}, demoCode: '', pin: '', learnerId: null, userId: null, taster: null };
+  let pub = { view: 'landing', error: '', data: {}, pin: '', learnerId: null, userId: null, taster: null };
   let exam = null, examView = null;
   let parentFocus = null, apFocus = null, modal = null;
   let downloadsNs = undefined;
 
   S.load();
+  window.QQ_ON_HYDRATE = () => { try { render(); } catch (e) { /* boot */ } };
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const st = () => S.state;
@@ -213,7 +214,7 @@
           <span class="spacer"></span>
           <span class="tiny muted">Privacy Notice · Terms · COPPA disclosure · Accessibility · Contact</span>
         </div>
-        <p class="tiny muted" style="margin-top:10px">Demo build. Accounts and progress are stored in this browser only — nothing is transmitted, and clearing site data resets everything. AP is a registered trademark of the College Board, which was not involved in and does not endorse this product.</p>
+        <p class="tiny muted" style="margin-top:10px">Accounts and progress sync to QuestQuiz servers so families can sign in from any device. AP is a registered trademark of the College Board, which was not involved in and does not endorse this product.</p>
       </footer>
     </div>`;
   }
@@ -308,14 +309,7 @@
           <button class="btn btn-ghost" type="button" data-act="pub" data-v="kidlogin">🚀 A child is signing in with a login ID</button>
           <button class="btn btn-ghost btn-sm" type="button" data-act="pub" data-v="signup-role">No account yet? Create one</button>
         </div>
-      </form>
-      <div class="card-flat stack" style="gap:6px">
-        <div class="eyebrow">Demo accounts</div>
-        <div class="tiny mono">admin@questquiz.app · admin123</div>
-        <div class="tiny mono">parent@questquiz.app · parent123</div>
-        <div class="tiny mono">office@mapleridge.edu · school123</div>
-        <div class="tiny mono">kabir@example.com · student123 <span class="muted">(grade 11, AP)</span></div>
-      </div>`);
+      </form>`);
   }
 
   /* ---------- role picker ---------- */
@@ -434,7 +428,7 @@
     const target = kind === 'parent'
       ? (st().users[pub.userId] || {})
       : (st().learners[pub.learnerId] || {});
-    const inbox = target.email || 'your inbox';
+    const inbox = target.email || pub.data.verifyEmail || 'your inbox';
     return authShell('Verify your email', `We sent a six-digit code to ${esc(inbox)}.`, `
       <div class="card stack">
         <div class="codebox">
@@ -447,9 +441,7 @@
           <button class="btn btn-ghost btn-sm" data-act="resendemail">Send a new code</button>
           <span class="tiny muted">Codes expire after 30 minutes</span>
         </div>
-        ${pub.demoCode
-      ? `<div class="notice notice-info">Demo mode — no outbound email is configured yet. Your code is <b class="mono">${esc(pub.demoCode)}</b>.</div>`
-      : `<div class="notice notice-good">Check your inbox (and spam folder). The code was emailed to <b>${esc(inbox)}</b>.</div>`}
+        <div class="notice notice-good">Check your inbox (and spam folder). The code was emailed to <b>${esc(inbox)}</b>. It is not shown on this page.</div>
       </div>`);
   }
 
@@ -1679,7 +1671,7 @@
       </div>
       <p class="tiny muted">Share the login ID and code with your child privately. They sign in with those — other kids’ names are never shown on the public child login page. The same 4-digit code is used before assessments.</p>
       ${consentBlock(true)}
-      <p class="tiny muted">On a live deployment the COPPA step hands off to a certified verification provider before the profile activates. This build records the consent, its version and its timestamp in the ledger.</p>
+      <p class="tiny muted">Verifiable parental consent is recorded with version and timestamp. A certified COPPA identity provider can be wired in later for stronger assurance.</p>
       <div class="btn-row"><button class="btn btn-primary" type="submit">Create learner profile</button>
       <button class="btn btn-ghost" type="button" data-act="cancelchild">Cancel</button></div>
     </form>`;
@@ -1804,26 +1796,6 @@
 
   function goPub(v) { pub.view = v; pub.error = ''; pub.pin = ''; pub.taster = null; render(); window.scrollTo(0, 0); }
 
-  /* Ask the Railway Node server to email a code via Resend.
-     Without RESEND_API_KEY the API returns demo:true and we show the code on screen. */
-  async function deliverEmailCode(email, code, purpose) {
-    try {
-      const res = await fetch('/api/email/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, purpose })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok === false) {
-        return { ok: false, demo: true, error: data.error || 'Email could not be sent.' };
-      }
-      return { ok: true, demo: Boolean(data.demo) };
-    } catch (_) {
-      // file:// preview or offline — keep the local demo code path
-      return { ok: true, demo: true };
-    }
-  }
-
   /* Repaint only the taster card. A full render would scroll the visitor back to
      the top of a long marketing page every time they answer a question. */
   function repaintTry() {
@@ -1865,8 +1837,8 @@
       repaintTry();
     },
     tryreset: () => { pub.taster = null; repaintTry(); },
-    dosignin: () => {
-      const res = S.signIn(val('si-email'), val('si-pass'));
+    dosignin: async () => {
+      const res = await S.signIn(val('si-email'), val('si-pass'));
       if (res.ok) {
         route = 'home'; parentFocus = null; apFocus = null; pub.error = '';
         render(); window.scrollTo(0, 0);
@@ -1874,36 +1846,46 @@
         return;
       }
       if (res.resume === 'parent-email' || res.resume === 'parent-otp') {
-        pub.userId = res.userId; pub.learnerId = null; pub.verifyKind = 'parent'; pub.demoCode = '';
+        pub.userId = res.userId; pub.learnerId = null; pub.verifyKind = 'parent';
+        pub.data = Object.assign({}, pub.data, { verifyEmail: res.email || '' });
+        if (res.email && !st().users[res.userId]) {
+          st().users[res.userId] = { id: res.userId, email: res.email, role: 'parent', status: 'email-pending', children: [] };
+        }
         goPub('parent-email'); toast('Verify your email to finish setting up.', 'bad'); return;
       }
       if (res.resume === 'student-email') {
-        pub.learnerId = res.learnerId; pub.userId = null; pub.verifyKind = 'student'; pub.demoCode = '';
+        pub.learnerId = res.learnerId; pub.userId = null; pub.verifyKind = 'student';
+        pub.data = Object.assign({}, pub.data, { verifyEmail: res.email || '' });
+        if (res.email && !st().learners[res.learnerId]) {
+          st().learners[res.learnerId] = { id: res.learnerId, email: res.email, status: 'email-pending' };
+        }
         goPub('student-email'); toast('Verify your email to finish setting up.', 'bad'); return;
       }
       if (res.resume === 'school-pending') { pub.error = res.error; pub.view = 'signin'; render(); return; }
       pub.error = res.error; render();
     },
 
-    doschool: () => {
+    doschool: async () => {
       const f = {
         schoolName: val('sc-name'), district: val('sc-district'), contactName: val('sc-contact'),
         role: val('sc-role'), email: val('sc-email'),
         students: val('sc-students'), password: val('sc-pass')
       };
-      const res = S.signupSchool(f);
+      const res = await S.signupSchool(f);
       if (!res.ok) { pub.error = res.error; render(); return; }
       pub.data = f; goPub('school-submitted');
     },
 
     doparent: async () => {
-      const res = S.signupParent({ name: val('pa-name'), email: val('pa-email'), password: val('pa-pass') });
+      const res = await S.signupParent({ name: val('pa-name'), email: val('pa-email'), password: val('pa-pass') });
       if (!res.ok) { pub.error = res.error; render(); return; }
-      pub.userId = res.user.id; pub.learnerId = null; pub.verifyKind = 'parent';
-      const sent = await deliverEmailCode(res.user.email, res.code, 'parent');
-      pub.demoCode = sent.demo ? res.code : '';
-      if (!sent.ok && sent.error) toast(sent.error, 'bad');
+      pub.userId = res.userId; pub.learnerId = null; pub.verifyKind = 'parent';
+      pub.data = Object.assign({}, pub.data, { verifyEmail: res.email || '' });
+      if (!st().users[res.userId]) {
+        st().users[res.userId] = { id: res.userId, email: res.email, role: 'parent', status: 'email-pending', children: [] };
+      }
       goPub('parent-email');
+      toast('Verification code sent to your email.', 'good');
     },
 
     doage: () => {
@@ -1913,56 +1895,53 @@
       goPub(age < 13 ? 'student-u13' : 'student-13');
     },
     dostudent13: async () => {
-      const res = S.signupStudent13({
+      const res = await S.signupStudent13({
         name: val('s-name'), grade: val('s-grade'), email: val('s-email'), password: val('s-pass'),
         pin: val('s-pin'), avatar: val('s-av'), schoolCode: val('s-school'),
         parentEmail: val('s-parent'), consents: collectConsents()
       });
       if (!res.ok) { pub.error = res.error; render(); return; }
-      pub.learnerId = res.learner.id; pub.userId = null; pub.verifyKind = 'student';
-      const sent = await deliverEmailCode(res.learner.email, res.code, 'student');
-      pub.demoCode = sent.demo ? res.code : '';
-      if (!sent.ok && sent.error) toast(sent.error, 'bad');
+      pub.learnerId = res.learnerId; pub.userId = null; pub.verifyKind = 'student';
+      pub.data = Object.assign({}, pub.data, { verifyEmail: res.email || '' });
+      if (!st().learners[res.learnerId]) {
+        st().learners[res.learnerId] = { id: res.learnerId, email: res.email, status: 'email-pending' };
+      }
       goPub('student-email');
+      toast('Verification code sent to your email.', 'good');
     },
-    doemailcode: () => {
+    doemailcode: async () => {
       const entered = val('ev-input') || pub.pin;
       const kind = pub.verifyKind || (pub.userId ? 'parent' : 'student');
       const res = kind === 'parent'
-        ? S.verifyParentEmailCode(pub.userId, entered)
-        : S.verifyEmailCode(pub.learnerId, entered);
+        ? await S.verifyParentEmailCode(pub.userId, entered)
+        : await S.verifyEmailCode(pub.learnerId, entered);
       if (!res.ok) { pub.error = res.error; pub.pin = ''; render(); return; }
       if (kind === 'parent') {
-        const waiting = S.pendingLinksFor(res.user.email);
+        const waiting = S.pendingLinksFor((res.user && res.user.email) || '');
         route = waiting.length ? 'approvals' : 'home';
-        pub.error = ''; pub.demoCode = ''; render(); window.scrollTo(0, 0);
+        pub.error = ''; render(); window.scrollTo(0, 0);
         toast(waiting.length ? 'Verified. A child signup is waiting for your consent.' : 'Email verified — your account is active.', 'good');
         return;
       }
-      route = 'home'; pub.error = ''; pub.demoCode = ''; render(); window.scrollTo(0, 0);
+      route = 'home'; pub.error = ''; render(); window.scrollTo(0, 0);
       toast('Email verified. Welcome to QuestQuiz.', 'good');
     },
     resendemail: async () => {
       const kind = pub.verifyKind || (pub.userId ? 'parent' : 'student');
       const res = kind === 'parent'
-        ? S.resendParentEmailCode(pub.userId)
-        : S.resendEmailCode(pub.learnerId);
+        ? await S.resendParentEmailCode(pub.userId)
+        : await S.resendEmailCode(pub.learnerId);
       if (!res.ok) { pub.error = res.error; render(); return; }
-      const email = kind === 'parent'
-        ? (st().users[pub.userId] || {}).email
-        : (st().learners[pub.learnerId] || {}).email;
-      const sent = await deliverEmailCode(email, res.code, kind);
-      pub.demoCode = sent.demo ? res.code : '';
       pub.pin = ''; pub.error = ''; render();
-      toast(sent.demo ? 'New demo code ready.' : 'New code emailed.');
+      toast('New code emailed.');
     },
 
-    dou13: () => {
+    dou13: async () => {
       const f = {
         childName: val('u-name'), grade: val('u-grade'), birthYear: pub.data.birthYear,
         pin: val('u-pin'), avatar: val('u-av'), parentEmail: val('u-parent'), schoolCode: val('u-school')
       };
-      const res = S.requestParentLink(f);
+      const res = await S.requestParentLink(f);
       pub.data = Object.assign({}, f, { parentExists: res.parentExists });
       goPub('u13-submitted');
     },
@@ -1987,11 +1966,11 @@
       pub.pin = '';
       render();
     },
-    dokidlogin: () => {
+    dokidlogin: async () => {
       const loginId = val('kid-login');
       const pin = val('kid-pin') || pub.pin || '';
       pub.data = Object.assign({}, pub.data, { draftKidLogin: loginId });
-      const res = S.signInChild(loginId, pin);
+      const res = await S.signInChild(loginId, pin);
       if (res.ok) {
         route = 'home'; pub.pin = ''; pub.error = ''; pub.data.draftKidLogin = '';
         render(); window.scrollTo(0, 0);
@@ -2016,7 +1995,7 @@
     go: el => { route = el.dataset.route; modal = null; render(); window.scrollTo(0, 0); },
     logout: () => {
       S.logout(); exam = null; modal = null; apFocus = null;
-      pub = { view: 'landing', error: '', data: {}, demoCode: '', pin: '', learnerId: null, userId: null };
+      pub = { view: 'landing', error: '', data: {}, pin: '', learnerId: null, userId: null };
       render(); window.scrollTo(0, 0);
     },
     theme: () => {

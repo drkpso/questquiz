@@ -10,9 +10,10 @@ Node is used only to stitch the files together and to run the tests.
 **Production domain:** [www.learnassessment.com](https://www.learnassessment.com)  
 **Recommended host:** GitHub → [Railway](https://railway.app) (Namecheap stays the DNS registrar)
 
-**Stack:** static HTML/CSS/JS. Railway runs a tiny Node static server from the
-`Dockerfile` (no PHP, no database). Accounts live in the visitor’s browser
-(`localStorage`). See `docs/PRODUCTION.md` for a future shared backend.
+**Stack:** static HTML/CSS/JS front end. Railway runs a tiny Node server from the
+`Dockerfile` that serves `public/` and a JSON account API under `/api/*`.
+Accounts and progress are **server-backed** (file DB under `DATA_DIR`, ideally a
+Railway Volume at `/data`). Email verification uses **Resend**.
 
 ---
 
@@ -38,29 +39,25 @@ npm run test:content # ~10 seconds, no browser needed — run this constantly
 npm test             # adds the full browser suite (needs: npm install)
 ```
 
-Environment variables: none required. See `.env.example` (local preview `PORT` /
-`HOST` only; future backend keys are documented as placeholders).
+Production env (see `.env.example`):
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `RESEND_API_KEY` | Yes (for signup) | Send verification codes by email |
+| `EMAIL_FROM` | Yes in prod | e.g. `QuestQuiz <noreply@learnassessment.com>` |
+| `DATA_DIR` | Recommended | Persist DB (Docker default `/data` + Railway Volume) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Recommended | Bootstrap platform admin for school approvals |
 
 ---
 
 ## Try it
 
-The site opens on a public landing page. Click **Try 3 questions** to see the
-engine work with no account at all, or sign in with one of these:
+The site opens on a public landing page. Click **Try 3 questions** with no account,
+or **Create free account** (parent / student 13+ / school). Verification codes are
+emailed via Resend — they are never shown on screen.
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | `admin@questquiz.app` | `admin123` |
-| Parent | `parent@questquiz.app` | `parent123` |
-| School | `office@mapleridge.edu` | `school123` |
-| Student (grade 11, 4 AP courses) | `kabir@example.com` | `student123` |
-
-Younger children use **"A child is signing in with a PIN"** — Aarav's PIN is `2468`,
-Kabir's is `9021`.
-
-A school registration is already waiting in the admin queue and an under-13 signup
-is already in the parent's approvals, so both review queues can be worked without
-creating test data first.
+Children sign in with a **login ID + 4-digit code** set by a parent. Other kids’
+profiles are never listed on the child login page.
 
 ---
 
@@ -78,9 +75,12 @@ src/                  the whole application — edit these
 
 scripts/
   build.js            stitches src/ into public/    (no dependencies)
-  serve.js            static server (local + Railway; no dependencies)
+  serve.js            static server + /api router   (no dependencies)
+  db.js               JSON file database under DATA_DIR
+  api.js              auth, sessions, scoped sync
+  email.js            Resend verification mailer
 
-Dockerfile            production image for Railway
+Dockerfile            production image for Railway (includes API + DATA_DIR=/data)
 railway.toml          Railway build/deploy settings
 
 test/
@@ -114,7 +114,9 @@ file, add it there too.
 Full steps + checklist: **[docs/RAILWAY.md](docs/RAILWAY.md)** ·
 **[docs/RAILWAY-CHECKLIST.md](docs/RAILWAY-CHECKLIST.md)**
 
-You need: GitHub access, a Railway account, and Namecheap DNS login. No app secrets.
+You need: GitHub access, a Railway account, Namecheap DNS, Resend (API key +
+verified domain), and a Railway Volume mounted at `/data` so accounts survive
+redeploys. Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to approve school registrations.
 
 ### Other hosts
 

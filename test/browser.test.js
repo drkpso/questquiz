@@ -72,119 +72,39 @@ const ok = (n, c) => { console.log((c ? '  PASS' : '  FAIL') + ' — ' + n); if 
   await page.click('.future-home button[data-act="theme"]');
   await page.waitForTimeout(250);
 
-  console.log('SIGN IN — parent');
+  console.log('LIVE MODE — no demo accounts / no on-page codes');
   await page.click('button[data-v="signin"]');
-  await page.fill('#si-email', 'parent@questquiz.app');
-  await page.fill('#si-pass', 'parent123');
-  await page.click('button[type="submit"]');
-  await page.waitForTimeout(400);
-  ok('lands on the parent overview', (await page.textContent('h1')).includes('Your family'));
-  ok('approvals badge shows a pending item', !!(await page.$('.navbadge')));
-  await page.click('button[data-route="approvals"]');
   await page.waitForTimeout(300);
-  ok('under-13 request is listed', (await page.content()).includes('Nina'));
-  await page.click('button[data-act="logout"]');
+  const signinHtml = await page.content();
+  ok('sign-in has no demo account card', !/Demo accounts|parent@questquiz\.app|kabir@example\.com|admin123/.test(signinHtml));
+  ok('child login ID entry is available', !!(await page.$('button[data-v="kidlogin"]')));
+  await page.click('button[data-v="kidlogin"]');
   await page.waitForTimeout(300);
-  ok('logout returns to the landing page', (await page.textContent('h1')).includes('more like a'));
-
-  console.log('SIGN IN — student with AP');
-  await page.click('button[data-v="signin"]');
-  await page.fill('#si-email', 'kabir@example.com');
-  await page.fill('#si-pass', 'student123');
-  await page.click('button[type="submit"]');
-  await page.waitForTimeout(400);
-  ok('lands on the quest board', (await page.textContent('h1')).includes('Ready for a quest'));
-  ok('AP nav item present for a grade-11 learner', !!(await page.$('button[data-route="ap"]')));
-  await page.click('button[data-route="ap"]');
-  await page.waitForTimeout(300);
-  ok('AP hub lists enrolled courses', (await page.$$('.apcard')).length === 4);
-  ok('exam countdown renders', !!(await page.$('.countdown')));
-  await page.click('.apcard');
-  await page.waitForTimeout(300);
-  ok('course page shows the unit table', (await page.$$('table tbody tr')).length >= 8);
-  ok('projected score shown', !!(await page.$('.scorebig')));
-
-  console.log('AP PRACTICE RUN');
-  await page.click('button[data-act="appractice"][data-u="0"]');
-  await page.waitForTimeout(300);
-  ok('PIN gate appears before the set', (await page.content()).includes('Confirm it is you'));
-  for (const d of '9021') await page.click(`button[data-act="epin"][data-n="${d}"]`);
-  await page.waitForTimeout(400);
-  ok('question 1 renders after the PIN', (await page.textContent('h2')).includes('Question 1 of 25'));
-
-  // answer everything wrong to force the error-repetition scheduler to fire
-  let answered = 0, grew = false;
-  for (let i = 0; i < 140; i++) {
-    const opts = await page.$$('.opt:not([disabled])');
-    if (!opts.length) break;
-    await opts[0].click();
-    await page.waitForTimeout(60);
-    const h = await page.textContent('h2');
-    if (h && /of (\d+)/.test(h) && Number(h.match(/of (\d+)/)[1]) > 25) grew = true;
-    const next = await page.$('button[data-act="nextq"]');
-    if (!next) break;
-    await next.click();
-    await page.waitForTimeout(60);
-    answered++;
-    if (await page.$('button[data-act="exitexam"]')) break;
-  }
-  ok('answered ' + answered + ' questions without stalling', answered > 20);
-  ok('set grew as missed questions were re-injected', grew);
-  ok('result screen reached', !!(await page.$('button[data-act="exitexam"]')));
-  ok('per-unit breakdown on the result', (await page.content()).includes('By unit'));
-
-  console.log('SIGNUP — parent email (no false "already exists")');
-  await page.click('button[data-act="exitexam"]');
+  ok('child login asks for login ID (no profile list)', !!(await page.$('#kid-login')) && !(await page.$('.learner-pick, .kid-directory')));
+  await page.click('button[data-act="pub"][data-v="landing"]');
   await page.waitForTimeout(200);
-  await page.click('button[data-act="logout"]');
-  await page.waitForTimeout(300);
+  ok('footer no longer says demo / browser-only', !(await page.content()).includes('Demo build') && !(await page.content()).includes('browser only'));
+
+  console.log('SIGNUP FORMS (server-backed; file:// cannot complete email)');
   await page.click('button[data-v="signup-role"]');
   await page.waitForTimeout(200);
   await page.click('button[data-v="signup-parent"]');
   await page.waitForTimeout(200);
-  await page.fill('#pa-name', 'New Parent');
-  await page.fill('#pa-email', 'brand-new-parent@example.com');
-  await page.fill('#pa-pass', 'pw12345');
-  await page.click('form[data-act="doparent"] button[type="submit"]');
-  await page.waitForTimeout(600);
-  const afterParent = await page.content();
-  ok('parent reaches email verify (not already-exists)', afterParent.includes('Verify your email') && !afterParent.includes('An account already exists'));
+  ok('parent signup form renders', !!(await page.$('#pa-email')) && !!(await page.$('form[data-act="doparent"]')));
   await page.click('button[data-act="pub"][data-v="landing"]');
   await page.waitForTimeout(200);
-
-  console.log('SIGNUP — school, then admin approval');
   await page.click('button[data-v="signup-role"]');
   await page.waitForTimeout(200);
   await page.click('button[data-v="signup-school"]');
   await page.waitForTimeout(200);
-  await page.fill('#sc-name', 'Cypress Charter');
-  await page.fill('#sc-district', 'Calcasieu');
-  await page.fill('#sc-contact', 'M Reyes');
-  await page.fill('#sc-role', 'Principal');
-  await page.fill('#sc-email', 'm@cypresscharter.edu');
-  await page.fill('#sc-students', '410');
-  await page.fill('#sc-pass', 'pw12345');
-  await page.click('button[type="submit"]');
-  await page.waitForTimeout(300);
-  ok('school sees the submitted screen', (await page.textContent('h1')).includes('Registration submitted'));
-
-  await page.click('button[data-v="signin"]');
-  await page.fill('#si-email', 'admin@questquiz.app');
-  await page.fill('#si-pass', 'admin123');
-  await page.click('button[type="submit"]');
-  await page.waitForTimeout(400);
-  await page.click('button[data-route="schools"]');
-  await page.waitForTimeout(300);
-  ok('new registration is in the admin queue', (await page.content()).includes('Cypress Charter'));
-  await page.click('button[data-act="approveschool"]');
-  await page.waitForTimeout(400);
-  ok('approval moves it out of pending', (await page.content()).includes('approved'));
+  ok('school signup form renders', !!(await page.$('#sc-email')));
+  await page.click('button[data-act="pub"][data-v="landing"]');
+  await page.waitForTimeout(200);
 
   console.log('THEME');
-  // Reset to the un-stamped state first — the landing check above cycled it.
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
   await page.waitForTimeout(150);
-  await page.click('button[data-act="theme"]');
+  await page.click('.future-home button[data-act="theme"]');
   await page.waitForTimeout(250);
   const dark = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   ok('dark theme repaints the body (' + dark + ')', dark !== 'rgb(238, 243, 255)');

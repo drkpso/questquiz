@@ -23,8 +23,15 @@ Domain: **www.learnassessment.com**
 - [ ] Old Namecheap A / parking / cPanel records for `@` and `www` removed
 - [ ] Railway shows domain verified; HTTPS works without certificate warnings
 
+## Volume + Variables
+
+- [ ] Volume mounted at `/data` (`DATA_DIR=/data`)
+- [ ] `RESEND_API_KEY` + `EMAIL_FROM` set
+- [ ] `ADMIN_EMAIL` + `ADMIN_PASSWORD` set (school approvals)
+
 ## Smoke test
 
 - [ ] Landing + **Try 3 questions**
-- [ ] Sign-in `kabir@example.com` / `student123`
+- [ ] `GET /api/status` → `serverBacked: true`, `emailConfigured: true`
+- [ ] Real parent signup → code by email only (not on screen)
 - [ ] Theme toggle; mobile layout; styled 404

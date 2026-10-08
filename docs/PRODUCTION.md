@@ -7,31 +7,29 @@ review, not code.
 
 ## Blockers
 
-### 1. Backend and accounts
+### 1. Backend and accounts (shipped — harden next)
 
-Everything lives in the visitor's own browser today. Two people opening the site
-get two unconnected copies; a parent who signs up on their phone will not find
-that account on their laptop; clearing site data wipes it.
+Accounts are **server-backed** via `/api/auth/*` and `/api/state` with a JSON file
+DB under `DATA_DIR` (mount a Railway Volume at `/data`). Sessions are bearer
+tokens; clients receive a scoped snapshot (not other families’ private data).
 
-`src/store.js` is deliberately shaped so this is replaceable without touching the
-interface. Everything `app.js` uses goes through the functions exported at the
-bottom of that file — `signIn`, `signupParent`, `verifyOtp`, `addLearner`,
-`recordResult`, `recordApSet`, `claimReward`, and so on. Reimplement those against
-an API and the interface works unchanged.
+Still recommended before high traffic:
 
-You will need: a database, real password hashing (never store plaintext — the demo
-does, and must not ship that way), sessions or tokens, and server-side
-authorisation so a parent cannot read another family's data by changing an id.
+- password hashing (bcrypt/argon2) — passwords are still stored reversible today
+- a real database (Postgres) instead of a single JSON file under write lock
+- rate limits on sign-in / verify / resend
 
-### 2. Email delivery (phone / SMS removed)
+Mount a Volume and set `ADMIN_EMAIL` / `ADMIN_PASSWORD` so school approvals work
+across redeploys.
+
+### 2. Email delivery (required for signup)
 
 Parents and students 13+ verify by **email only** — six digits, expiry, attempt
-limits, resend. Phone / SMS verification has been removed from signup and UI.
+limits, resend. Codes are generated on the server and sent via Resend; they are
+**never returned to the browser** when `RESEND_API_KEY` is set. Without the key,
+signup endpoints that need email fail closed (no on-screen code fallback).
 
-The Railway Node server exposes `POST /api/email/send`. Set `RESEND_API_KEY`
-(and optionally `EMAIL_FROM`) in Railway Variables to deliver real messages via
-Resend. Without the key, the UI shows the code on screen (demo fallback).
-See `.env.example`.
+Set `RESEND_API_KEY` and `EMAIL_FROM` in Railway Variables. See `.env.example`.
 
 ### 3. Verifiable parental consent (COPPA)
 
